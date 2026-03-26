@@ -38,6 +38,14 @@ tasks.register<JavaExec>("runTestServer") {
     standardInput = System.`in`
 }
 
+tasks.register<JavaExec>("runSecureTestServer") {
+    group = "application"
+    description = "Run the InstantPear secure (WSS) test WebSocket server"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pixeldweller.instantpear.server.TestSecureServerKt")
+    standardInput = System.`in`
+}
+
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
