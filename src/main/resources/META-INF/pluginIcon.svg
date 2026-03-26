@@ -1,0 +1,36 @@
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <!-- Pear body -->
+    <path d="M20 38C14 38 8 32 7 26C6 20 8 16 10 13C12 10 14 8 15 6.5C16 5 16 4 16 4
+             C17 4.5 18 5.5 20 5.5C22 5.5 23 4.5 24 4
+             C24 4 24 5 23 6.5C22 8 20 10 20 13C20 16 22 16 24 13
+             C26 10 28 8 30 13C32 18 34 22 32 28C30 34 26 38 20 38Z"
+          fill="url(#pearGrad)"/>
+    <!-- Pear highlight -->
+    <path d="M14 28C13 24 14 18 16 14C17 12 17 10 17 8
+             C18 9 19 10 20 11C20 14 18 16 16 20C14 24 14 26 14 28Z"
+          fill="url(#highlightGrad)" opacity="0.4"/>
+    <!-- Stem -->
+    <path d="M20 5.5C20 5.5 20.5 3 21 1.5C21.5 0 23 0 23.5 0.5C24 1 23 2 22 3C21 4 20 5.5 20 5.5Z"
+          fill="#5D4037" stroke="#4E342E" stroke-width="0.3"/>
+    <!-- Leaf -->
+    <path d="M22 3C23 2 25 1.5 27 2C29 2.5 29 4 28 4.5C27 5 25 5 23.5 4C22 3 22 3 22 3Z"
+          fill="url(#leafGrad)"/>
+    <!-- Leaf vein -->
+    <path d="M23 3.5C24 3.2 25.5 3 27 3.5" stroke="#2E7D32" stroke-width="0.4" fill="none" opacity="0.6"/>
+    <defs>
+        <linearGradient id="pearGrad" x1="10" y1="4" x2="30" y2="38" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#C8E06A"/>
+            <stop offset="0.4" stop-color="#8BC34A"/>
+            <stop offset="0.75" stop-color="#689F38"/>
+            <stop offset="1" stop-color="#558B2F"/>
+        </linearGradient>
+        <linearGradient id="highlightGrad" x1="15" y1="8" x2="15" y2="28" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#FFFFFF"/>
+            <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+        </linearGradient>
+        <linearGradient id="leafGrad" x1="22" y1="2" x2="28" y2="5" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#66BB6A"/>
+            <stop offset="1" stop-color="#2E7D32"/>
+        </linearGradient>
+    </defs>
+</svg>

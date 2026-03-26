@@ -1,0 +1,55 @@
+<!-- Plugin Configuration File: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <!-- Unique identifier of the plugin. It should be FQN, cannot be changed between the plugin versions. -->
+    <id>com.pixeldweller.InstantPear</id>
+
+    <!-- Public plugin name should be written in Title Case.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
+    <name>InstantPear</name>
+
+    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
+    <vendor url="https://github.com/Pixeldweller/">Pixeldweller Hobby Dev</vendor>
+
+    <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
+    <description><![CDATA[
+        Multiplayer live coding plugin for IntelliJ.<br>
+        Host or join collaborative coding sessions where you can see and edit code together in real-time.<br>
+        <ul>
+            <li>Create or join lobbies with a code and key</li>
+            <li>See remote cursors and selections</li>
+            <li>Edits are synced instantly with subtle highlighting</li>
+            <li>Scroll indicators show when collaborators are above or below your view</li>
+        </ul>
+    ]]></description>
+
+    <!-- Product and plugin compatibility requirements.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <depends>com.intellij.modules.compose</depends>
+
+    <depends>com.intellij.java</depends>
+    <depends>com.intellij.properties</depends>
+    <resource-bundle>messages.MyMessageBundle</resource-bundle>
+    <!-- Extensions defined by the plugin.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="InstantPear"
+                    factoryClass="com.pixeldweller.instantpear.ui.PearToolWindowFactory"
+                    icon="/icons/toolWindowPear.svg"
+                    anchor="right"/>
+        <highlightInfoFilter
+                    implementation="com.pixeldweller.instantpear.editor.CollabHighlightFilter"/>
+        <notificationGroup id="InstantPear"
+                           displayType="STICKY_BALLOON"/>
+    </extensions>
+
+    <actions>
+        <action id="InstantPear.RequestFile"
+                class="com.pixeldweller.instantpear.actions.RequestFileAction"
+                text="Request Host to Open This File"
+                description="Ask the host to open this file in the collaborative session">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
