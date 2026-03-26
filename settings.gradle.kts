@@ -1,1 +1,1 @@
-rootProject.name = "InstantPear"
+rootProject.name = "InstantPear-intellij-plugin"
