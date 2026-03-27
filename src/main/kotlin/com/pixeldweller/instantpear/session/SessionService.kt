@@ -62,6 +62,8 @@ class SessionService(private val project: Project) {
     private var client: PearClient? = null
     private val collabEditors = mutableMapOf<String, CollabEditor>()
     private val guestVirtualFiles = mutableMapOf<String, LightVirtualFile>()
+    // Chunk reassembly buffer: fileName -> array of chunks
+    private val chunkBuffer = mutableMapOf<String, Array<String?>>()
     private var myUserId: String? = null
     private var myUserName: String = "Developer"
     private var messageBusConnection: MessageBusConnection? = null
@@ -387,6 +389,24 @@ class SessionService(private val project: Project) {
                     }
                 }
 
+                PearMessage.DOCUMENT_SYNC_CHUNK -> {
+                    if (!isHost.value) {
+                        val fileName = message.fileName ?: return@invokeLater
+                        val chunkIndex = message.chunkIndex ?: return@invokeLater
+                        val totalChunks = message.totalChunks ?: return@invokeLater
+                        val chunk = message.content ?: return@invokeLater
+
+                        val chunks = chunkBuffer.getOrPut(fileName) { arrayOfNulls(totalChunks) }
+                        chunks[chunkIndex] = chunk
+
+                        if (chunks.all { it != null }) {
+                            chunkBuffer.remove(fileName)
+                            val fullContent = chunks.joinToString("")
+                            openCollabFile(fileName, fullContent)
+                        }
+                    }
+                }
+
                 PearMessage.DOCUMENT_CHANGE -> {
                     val fileId = message.fileName ?: return@invokeLater
                     collabEditors[fileId]?.applyRemoteChange(message)
@@ -525,6 +545,7 @@ class SessionService(private val project: Project) {
         connectedUsers.clear()
         sharedFiles.clear()
         userFocusMap.clear()
+        chunkBuffer.clear()
     }
 
     companion object {

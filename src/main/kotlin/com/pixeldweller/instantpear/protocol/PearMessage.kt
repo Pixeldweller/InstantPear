@@ -22,6 +22,9 @@ data class PearMessage(
     val selectionEnd: Int? = null,
     val line: Int? = null,
     val column: Int? = null,
+    // Chunking
+    val chunkIndex: Int? = null,
+    val totalChunks: Int? = null,
     // File request
     val filePath: String? = null,
     // Error
@@ -34,6 +37,7 @@ data class PearMessage(
         const val LOBBY_CREATED = "lobby_created"
         const val LOBBY_JOINED = "lobby_joined"
         const val DOCUMENT_SYNC = "document_sync"
+        const val DOCUMENT_SYNC_CHUNK = "document_sync_chunk"
         const val DOCUMENT_CHANGE = "document_change"
         const val CURSOR_UPDATE = "cursor_update"
         const val MOUSE_MOVE = "mouse_move"

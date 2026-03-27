@@ -25,6 +25,10 @@ fun main() {
 }
 
 class TestPearServer(port: Int) : WebSocketServer(InetSocketAddress(port)) {
+    init {
+        connectionLostTimeout = 60
+    }
+
     private val gson = Gson()
 
     data class LobbyMember(val conn: WebSocket, val userId: String, val userName: String)

@@ -33,8 +33,34 @@ class PearClient(
     }
 
     fun send(message: PearMessage) {
-        val json = gson.toJson(message)
-        webSocket?.sendText(json, true)
+        if (message.type == PearMessage.DOCUMENT_SYNC && message.content != null && message.content.length > CHUNK_SIZE) {
+            sendChunked(message)
+        } else {
+            val json = gson.toJson(message)
+            webSocket?.sendText(json, true)
+        }
+    }
+
+    private fun sendChunked(message: PearMessage) {
+        val content = message.content ?: return
+        val chunks = content.chunked(CHUNK_SIZE)
+        for ((index, chunk) in chunks.withIndex()) {
+            val chunkMsg = PearMessage(
+                type = PearMessage.DOCUMENT_SYNC_CHUNK,
+                fileName = message.fileName,
+                targetUserId = message.targetUserId,
+                userId = message.userId,
+                userName = message.userName,
+                content = chunk,
+                chunkIndex = index,
+                totalChunks = chunks.size
+            )
+            webSocket?.sendText(gson.toJson(chunkMsg), true)
+        }
+    }
+
+    companion object {
+        const val CHUNK_SIZE = 256 * 1024 // 256KB per chunk
     }
 
     fun disconnect() {
