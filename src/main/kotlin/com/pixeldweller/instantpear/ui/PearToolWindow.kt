@@ -1,5 +1,6 @@
 package com.pixeldweller.instantpear.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,11 +15,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.pixeldweller.instantpear.protocol.InviteLink
+import com.pixeldweller.instantpear.protocol.DebugVariable
 import com.pixeldweller.instantpear.session.RemoteUser
 import com.pixeldweller.instantpear.session.SessionService
 import com.pixeldweller.instantpear.session.SessionState
@@ -56,6 +61,12 @@ private fun PearToolWindowContent(project: Project) {
     val connectedUsers = session.connectedUsers
     val sharedFiles = session.sharedFiles
     val userFocusMap = session.userFocusMap
+    val hostRunState by session.hostRunState
+    val hostProcessName by session.hostProcessName
+    val debugFileName by session.debugFileName
+    val debugLine by session.debugLine
+    val debugVariables = session.debugVariables
+    val debugVariableChildren = session.debugVariableChildren
 
     Column(
         modifier = Modifier.padding(12.dp).fillMaxWidth(),
@@ -95,6 +106,12 @@ private fun PearToolWindowContent(project: Project) {
                     closedCollabFiles = session.closedCollabFiles.toList(),
                     connectedUsers = connectedUsers.toList(),
                     userFocusMap = userFocusMap.toMap(),
+                    hostRunState = hostRunState,
+                    hostProcessName = hostProcessName,
+                    debugFileName = debugFileName,
+                    debugLine = debugLine,
+                    debugVariables = debugVariables.toList(),
+                    debugVariableChildren = debugVariableChildren.toMap(),
                     onLeave = { session.leaveLobby() },
                     onJumpToUser = { session.jumpToUser(it) },
                     onReopenFile = { session.reopenFile(it) },
@@ -103,7 +120,8 @@ private fun PearToolWindowContent(project: Project) {
                         val clipboard = Toolkit.getDefaultToolkit().systemClipboard
                         clipboard.setContents(StringSelection(link), null)
                         session.statusMessage.value = "Invite link copied to clipboard"
-                    }
+                    },
+                    onInspectVariable = { session.requestInspectVariable(it) }
                 )
             }
         }
@@ -233,10 +251,17 @@ private fun ConnectedView(
     closedCollabFiles: List<String>,
     connectedUsers: List<RemoteUser>,
     userFocusMap: Map<String, UserFocus>,
+    hostRunState: String,
+    hostProcessName: String,
+    debugFileName: String?,
+    debugLine: Int?,
+    debugVariables: List<DebugVariable>,
+    debugVariableChildren: Map<String, List<DebugVariable>>,
     onLeave: () -> Unit,
     onJumpToUser: (userId: String) -> Unit,
     onReopenFile: (fileId: String) -> Unit,
-    onCopyInviteLink: () -> Unit
+    onCopyInviteLink: () -> Unit,
+    onInspectVariable: (variablePath: String) -> Unit
 ) {
     GroupHeader(if (isHost) "Hosting Session" else "Collaborative Session")
 
@@ -249,6 +274,26 @@ private fun ConnectedView(
         OutlinedButton(onClick = onCopyInviteLink) {
             Text("Copy Invite Link")
         }
+    }
+
+    // Run/Debug state indicator
+    if (hostRunState != "idle") {
+        Spacer(Modifier.height(4.dp))
+        val stateLabel = when (hostRunState) {
+            "running" -> "Running"
+            "debugging" -> "Debugging"
+            else -> hostRunState
+        }
+        val processLabel = if (hostProcessName.isNotEmpty()) ": $hostProcessName" else ""
+        Text(
+            text = "$stateLabel$processLabel",
+            fontWeight = FontWeight.Bold
+        )
+    }
+
+    // Debug position indicator
+    if (hostRunState == "debugging" && debugFileName != null && debugLine != null) {
+        Text("Paused at $debugFileName:${debugLine + 1}")
     }
 
     if (sharedFiles.isNotEmpty()) {
@@ -296,9 +341,65 @@ private fun ConnectedView(
         Text("Waiting for collaborators to join...")
     }
 
+    // Debug variables panel
+    if (hostRunState == "debugging" && debugVariables.isNotEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        GroupHeader("Debug Variables")
+        DebugVariableList(
+            variables = debugVariables,
+            childrenMap = debugVariableChildren,
+            depth = 0,
+            onInspect = onInspectVariable
+        )
+    }
+
     Spacer(Modifier.height(8.dp))
 
     OutlinedButton(onClick = onLeave) {
         Text("Leave Lobby")
+    }
+}
+
+@Composable
+private fun DebugVariableList(
+    variables: List<DebugVariable>,
+    childrenMap: Map<String, List<DebugVariable>>,
+    depth: Int,
+    onInspect: (variablePath: String) -> Unit
+) {
+    val indent = "  ".repeat(depth)
+    variables.forEach { variable ->
+        val expanded = childrenMap.containsKey(variable.path)
+        val prefix = when {
+            !variable.hasChildren -> "  "
+            expanded -> "- "
+            else -> "+ "
+        }
+        val typeStr = if (variable.type != null) "${variable.type} " else ""
+        val valueStr = variable.value ?: "null"
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp).then(
+                if (variable.hasChildren) Modifier.clickable { onInspect(variable.path) }
+                else Modifier
+            )
+        ) {
+            Text(
+                text = "$indent$prefix${variable.name}: $typeStr= $valueStr",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp
+            )
+        }
+
+        // Show children if expanded
+        if (expanded) {
+            val children = childrenMap[variable.path] ?: emptyList()
+            DebugVariableList(
+                variables = children,
+                childrenMap = childrenMap,
+                depth = depth + 1,
+                onInspect = onInspect
+            )
+        }
     }
 }
