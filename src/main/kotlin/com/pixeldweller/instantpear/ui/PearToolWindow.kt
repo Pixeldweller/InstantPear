@@ -1,19 +1,25 @@
 package com.pixeldweller.instantpear.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +73,7 @@ private fun PearToolWindowContent(project: Project) {
     val debugLine by session.debugLine
     val debugVariables = session.debugVariables
     val debugVariableChildren = session.debugVariableChildren
+    val consoleViewport by session.consoleViewport
 
     Column(
         modifier = Modifier.padding(12.dp).fillMaxWidth(),
@@ -112,6 +119,7 @@ private fun PearToolWindowContent(project: Project) {
                     debugLine = debugLine,
                     debugVariables = debugVariables.toList(),
                     debugVariableChildren = debugVariableChildren.toMap(),
+                    consoleViewport = consoleViewport,
                     onLeave = { session.leaveLobby() },
                     onJumpToUser = { session.jumpToUser(it) },
                     onReopenFile = { session.reopenFile(it) },
@@ -241,6 +249,16 @@ private fun DisconnectedView(
             settings.state.focusNewCollabTabs = it
         }
     )
+
+    val sendDebugVars = remember { mutableStateOf(settings.state.sendDebugVariables) }
+    CheckboxRow(
+        text = "Send debug variables to client when debugging",
+        checked = sendDebugVars.value,
+        onCheckedChange = {
+            sendDebugVars.value = it
+            settings.state.sendDebugVariables = it
+        }
+    )
 }
 
 @Composable
@@ -257,6 +275,7 @@ private fun ConnectedView(
     debugLine: Int?,
     debugVariables: List<DebugVariable>,
     debugVariableChildren: Map<String, List<DebugVariable>>,
+    consoleViewport: String,
     onLeave: () -> Unit,
     onJumpToUser: (userId: String) -> Unit,
     onReopenFile: (fileId: String) -> Unit,
@@ -353,6 +372,39 @@ private fun ConnectedView(
         )
     }
 
+    // Console viewport
+    if (hostRunState != "idle" && consoleViewport.isNotEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Host Console", fontWeight = FontWeight.Bold)
+            OutlinedButton(onClick = {
+                val clipboard = Toolkit.getDefaultToolkit().systemClipboard
+                clipboard.setContents(StringSelection(consoleViewport), null)
+            }) {
+                Text("Copy", fontSize = 10.sp)
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF1E1E1E))
+                .padding(6.dp)
+                .verticalScroll(rememberScrollState())
+                .horizontalScroll(rememberScrollState())
+        ) {
+            Text(
+                text = consoleViewport,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                color = Color(0xFFCCCCCC)
+            )
+        }
+    }
+
     Spacer(Modifier.height(8.dp))
 
     OutlinedButton(onClick = onLeave) {
@@ -368,6 +420,7 @@ private fun DebugVariableList(
     onInspect: (variablePath: String) -> Unit
 ) {
     val indent = "  ".repeat(depth)
+    val maxValueLength = 60
     variables.forEach { variable ->
         val expanded = childrenMap.containsKey(variable.path)
         val prefix = when {
@@ -376,19 +429,29 @@ private fun DebugVariableList(
             else -> "+ "
         }
         val typeStr = if (variable.type != null) "${variable.type} " else ""
-        val valueStr = variable.value ?: "null"
+        val fullValue = variable.value ?: "null"
+        val displayValue = if (fullValue.length > maxValueLength) fullValue.take(maxValueLength) + "..." else fullValue
 
         Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp).then(
-                if (variable.hasChildren) Modifier.clickable { onInspect(variable.path) }
-                else Modifier
-            )
+            modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "$indent$prefix${variable.name}: $typeStr= $valueStr",
+                text = "$indent$prefix${variable.name}: $typeStr= $displayValue",
                 fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp
+                fontSize = 11.sp,
+                modifier = Modifier.weight(1f).then(
+                    if (variable.hasChildren) Modifier.clickable { onInspect(variable.path) }
+                    else Modifier
+                )
             )
+            OutlinedButton(onClick = {
+                val clipboard = Toolkit.getDefaultToolkit().systemClipboard
+                clipboard.setContents(StringSelection(fullValue), null)
+            }) {
+                Text("Copy", fontSize = 10.sp)
+            }
         }
 
         // Show children if expanded

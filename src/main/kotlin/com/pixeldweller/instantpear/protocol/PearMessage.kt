@@ -42,7 +42,9 @@ data class PearMessage(
     val processName: String? = null,
     // Debug variables
     val variables: List<DebugVariable>? = null,
-    val variablePath: String? = null
+    val variablePath: String? = null,
+    // Console viewport
+    val consoleText: String? = null
 ) {
     companion object {
         const val CREATE_LOBBY = "create_lobby"
@@ -67,5 +69,6 @@ data class PearMessage(
         const val DEBUG_VARIABLES = "debug_variables"
         const val DEBUG_VARIABLE_CHILDREN = "debug_variable_children"
         const val DEBUG_INSPECT_VARIABLE = "debug_inspect_variable"
+        const val CONSOLE_VIEWPORT = "console_viewport"
     }
 }

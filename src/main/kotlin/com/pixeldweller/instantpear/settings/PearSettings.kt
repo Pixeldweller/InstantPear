@@ -14,6 +14,7 @@ class PearSettings : PersistentStateComponent<PearSettings.State> {
         var serverUrl: String = "ws://localhost:9274"
         var userName: String = "Developer"
         var focusNewCollabTabs: Boolean = true
+        var sendDebugVariables: Boolean = true
     }
 
     private var myState = State()

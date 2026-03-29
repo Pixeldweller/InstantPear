@@ -65,6 +65,7 @@ class SessionService(private val project: Project) {
     val debugVariables = mutableStateListOf<DebugVariable>()
     // Expanded children: parentPath -> list of children
     val debugVariableChildren = mutableStateMapOf<String, List<DebugVariable>>()
+    val consoleViewport = mutableStateOf("")
 
     // Stored for invite link generation
     private var currentServerUrl: String = ""
@@ -595,6 +596,10 @@ class SessionService(private val project: Project) {
                     debugVariableChildren[parentPath] = message.variables ?: emptyList()
                 }
 
+                PearMessage.CONSOLE_VIEWPORT -> {
+                    consoleViewport.value = message.consoleText ?: ""
+                }
+
                 PearMessage.DEBUG_INSPECT_VARIABLE -> {
                     // Host receives inspect request from client
                     if (isHost.value) {
@@ -632,6 +637,7 @@ class SessionService(private val project: Project) {
         debugLine.value = null
         debugVariables.clear()
         debugVariableChildren.clear()
+        consoleViewport.value = ""
     }
 
     private fun openCollabFile(fileName: String, content: String) {
