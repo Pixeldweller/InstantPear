@@ -92,10 +92,12 @@ private fun PearToolWindowContent(project: Project) {
                     isHost = isHost,
                     lobbyCode = lobbyCode,
                     sharedFiles = sharedFiles.toList(),
+                    closedCollabFiles = session.closedCollabFiles.toList(),
                     connectedUsers = connectedUsers.toList(),
                     userFocusMap = userFocusMap.toMap(),
                     onLeave = { session.leaveLobby() },
                     onJumpToUser = { session.jumpToUser(it) },
+                    onReopenFile = { session.reopenFile(it) },
                     onCopyInviteLink = {
                         val link = session.getInviteLink()
                         val clipboard = Toolkit.getDefaultToolkit().systemClipboard
@@ -228,10 +230,12 @@ private fun ConnectedView(
     isHost: Boolean,
     lobbyCode: String,
     sharedFiles: List<String>,
+    closedCollabFiles: List<String>,
     connectedUsers: List<RemoteUser>,
     userFocusMap: Map<String, UserFocus>,
     onLeave: () -> Unit,
     onJumpToUser: (userId: String) -> Unit,
+    onReopenFile: (fileId: String) -> Unit,
     onCopyInviteLink: () -> Unit
 ) {
     GroupHeader(if (isHost) "Hosting Session" else "Collaborative Session")
@@ -251,7 +255,19 @@ private fun ConnectedView(
         Spacer(Modifier.height(4.dp))
         Text("Shared files (${sharedFiles.size}):")
         sharedFiles.forEach { file ->
-            Text("  $file")
+            val isClosed = !isHost && file in closedCollabFiles
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("  $file")
+                if (isClosed) {
+                    OutlinedButton(onClick = { onReopenFile(file) }) {
+                        Text("Reopen")
+                    }
+                }
+            }
         }
     }
 

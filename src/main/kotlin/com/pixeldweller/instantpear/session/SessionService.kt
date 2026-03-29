@@ -59,6 +59,11 @@ class SessionService(private val project: Project) {
     private var currentServerUrl: String = ""
     private var currentLobbyKey: String = ""
 
+    val closedCollabFiles = mutableStateListOf<String>() // guest-only: files closed by user
+
+    data class PendingFileRequest(val filePath: String, val requesterId: String, val requesterName: String)
+    private val pendingFileRequests = ArrayDeque<PendingFileRequest>()
+
     private var client: PearClient? = null
     private val collabEditors = mutableMapOf<String, CollabEditor>()
     private val guestVirtualFiles = mutableMapOf<String, LightVirtualFile>()
@@ -173,10 +178,37 @@ class SessionService(private val project: Project) {
         statusMessage.value = "Requested host to open: $relativePath"
     }
 
+    fun reopenFile(fileId: String) {
+        if (state.value != SessionState.CONNECTED || isHost.value) return
+        // Remove stale editor/vf so openCollabFile will open fresh
+        collabEditors.remove(fileId)
+        guestVirtualFiles.remove(fileId)
+        closedCollabFiles.remove(fileId)
+        // Ask host to resend document content
+        client?.send(
+            PearMessage(
+                type = PearMessage.DOCUMENT_RESYNC_REQUEST,
+                fileName = fileId,
+                userId = myUserId,
+                userName = myUserName
+            )
+        )
+        statusMessage.value = "Reopening: $fileId"
+    }
+
+    fun hasPendingFileRequest(): Boolean = pendingFileRequests.isNotEmpty()
+
+    fun acceptLastFileRequest() {
+        val request = pendingFileRequests.removeLastOrNull() ?: return
+        acceptFileRequest(request.filePath, request.requesterId)
+    }
+
     private fun handleFileRequest(message: PearMessage) {
         val requesterId = message.userId ?: return
         val requesterName = message.userName ?: "Someone"
         val filePath = message.filePath ?: return
+
+        pendingFileRequests.addLast(PendingFileRequest(filePath, requesterId, requesterName))
 
         val notification = NotificationGroupManager.getInstance()
             .getNotificationGroup("InstantPear")
@@ -186,10 +218,12 @@ class SessionService(private val project: Project) {
                 NotificationType.INFORMATION
             )
 
-        notification.addAction(NotificationAction.createSimpleExpiring("Accept") {
+        notification.addAction(NotificationAction.createSimpleExpiring("Accept (Alt+Shift+P)") {
+            pendingFileRequests.removeLastOrNull()
             acceptFileRequest(filePath, requesterId)
         })
         notification.addAction(NotificationAction.createSimpleExpiring("Deny") {
+            pendingFileRequests.removeLastOrNull()
             statusMessage.value = "Denied file request: $filePath"
         })
 
@@ -299,6 +333,24 @@ class SessionService(private val project: Project) {
                                 )
                             )
                         }
+                    }
+                }
+
+                override fun fileClosed(source: FileEditorManager, file: com.intellij.openapi.vfs.VirtualFile) {
+                    if (state.value != SessionState.CONNECTED) return
+                    if (isHost.value) {
+                        // Host closed a shared file — remove stale editor so re-opening triggers re-attach + re-sync
+                        val fileId = getFileId2(file)
+                        if (collabEditors.containsKey(fileId)) {
+                            collabEditors.remove(fileId)?.let { Disposer.dispose(it) }
+                            sharedFiles.remove(fileId)
+                            client?.send(PearMessage(type = PearMessage.FILE_CLOSED, fileName = fileId))
+                        }
+                    } else {
+                        // Guest closed a collab tab — keep in sharedFiles for reopen
+                        val fileId = guestVirtualFiles.entries.find { it.value == file }?.key ?: return
+                        collabEditors.remove(fileId)?.let { Disposer.dispose(it) }
+                        if (fileId !in closedCollabFiles) closedCollabFiles.add(fileId)
                     }
                 }
             }
@@ -441,6 +493,32 @@ class SessionService(private val project: Project) {
                     )
                 }
 
+                PearMessage.FILE_CLOSED -> {
+                    if (!isHost.value) {
+                        val fileId = message.fileName ?: return@invokeLater
+                        collabEditors.remove(fileId)?.let { Disposer.dispose(it) }
+                        guestVirtualFiles.remove(fileId)?.let { FileEditorManager.getInstance(project).closeFile(it) }
+                        sharedFiles.remove(fileId)
+                        closedCollabFiles.remove(fileId)
+                    }
+                }
+
+                PearMessage.DOCUMENT_RESYNC_REQUEST -> {
+                    if (isHost.value) {
+                        val fileId = message.fileName ?: return@invokeLater
+                        val requesterId = message.userId ?: return@invokeLater
+                        val ce = collabEditors[fileId] ?: return@invokeLater
+                        client?.send(
+                            PearMessage(
+                                type = PearMessage.DOCUMENT_SYNC,
+                                content = ce.getCurrentContent(),
+                                fileName = fileId,
+                                targetUserId = requesterId
+                            )
+                        )
+                    }
+                }
+
                 PearMessage.FILE_REQUEST -> {
                     if (isHost.value) {
                         handleFileRequest(message)
@@ -516,6 +594,8 @@ class SessionService(private val project: Project) {
         return vf?.name ?: "untitled"
     }
 
+    private fun getFileId2(vf: com.intellij.openapi.vfs.VirtualFile): String = vf.name
+
     private fun closeGuestTabs() {
         val fem = FileEditorManager.getInstance(project)
         for (vf in guestVirtualFiles.values) {
@@ -546,6 +626,8 @@ class SessionService(private val project: Project) {
         sharedFiles.clear()
         userFocusMap.clear()
         chunkBuffer.clear()
+        closedCollabFiles.clear()
+        pendingFileRequests.clear()
     }
 
     companion object {

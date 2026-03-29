@@ -48,8 +48,16 @@
                 class="com.pixeldweller.instantpear.actions.RequestFileAction"
                 text="Request Host to Open This File"
                 description="Ask the host to open this file in the collaborative session">
+            <keyboard-shortcut keymap="$default" first-keystroke="alt P"/>
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+
+        <action id="InstantPear.AcceptFileRequest"
+                class="com.pixeldweller.instantpear.actions.AcceptFileRequestAction"
+                text="Accept File Request"
+                description="Accept the most recent file open request from a collaborator">
+            <keyboard-shortcut keymap="$default" first-keystroke="alt shift P"/>
         </action>
     </actions>
 </idea-plugin>
