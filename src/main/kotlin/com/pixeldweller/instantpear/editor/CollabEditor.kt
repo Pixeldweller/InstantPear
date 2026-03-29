@@ -11,6 +11,7 @@ import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseMotionListener
 import com.intellij.openapi.editor.event.VisibleAreaListener
+import com.intellij.openapi.editor.markup.GutterIconRenderer
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.RangeHighlighter
@@ -19,8 +20,13 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.pixeldweller.instantpear.protocol.PearMessage
 import java.awt.Color
+import java.awt.Component
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.RenderingHints
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import javax.swing.Icon
 
 class CollabEditor(
     private val project: Project,
@@ -38,6 +44,13 @@ class CollabEditor(
         Thread(r, "InstantPear-highlight-cleanup").apply { isDaemon = true }
     }
     private val changeHighlighters = mutableListOf<RangeHighlighter>()
+
+    private var debugLineHighlighter: RangeHighlighter? = null
+
+    private val debugLineColor = JBColor(
+        Color(200, 230, 255),  // Light blue for light theme
+        Color(40, 60, 90)      // Dark blue for dark theme
+    )
 
     private val remoteChangeColor = JBColor(
         Color(255, 255, 180),
@@ -182,6 +195,34 @@ class CollabEditor(
         }
     }
 
+    fun setDebugLine(line: Int?) {
+        ApplicationManager.getApplication().invokeLater {
+            debugLineHighlighter?.let {
+                try {
+                    editor.markupModel.removeHighlighter(it)
+                } catch (_: Exception) {
+                }
+            }
+            debugLineHighlighter = null
+
+            if (line == null || line < 0 || line >= editor.document.lineCount) return@invokeLater
+
+            val startOffset = editor.document.getLineStartOffset(line)
+            val endOffset = editor.document.getLineEndOffset(line)
+            val attrs = TextAttributes().apply {
+                backgroundColor = debugLineColor
+            }
+            debugLineHighlighter = editor.markupModel.addRangeHighlighter(
+                startOffset, endOffset,
+                HighlighterLayer.LAST + 5,
+                attrs,
+                HighlighterTargetArea.LINES_IN_RANGE
+            ).also {
+                it.gutterIconRenderer = DebugArrowGutterIcon()
+            }
+        }
+    }
+
     fun getCurrentContent(): String = editor.document.text
 
     override fun dispose() {
@@ -189,6 +230,12 @@ class CollabEditor(
         editor.caretModel.removeCaretListener(caretListener)
         editor.removeEditorMouseMotionListener(mouseMotionListener)
         editor.scrollingModel.removeVisibleAreaListener(scrollListener)
+        debugLineHighlighter?.let {
+            try {
+                editor.markupModel.removeHighlighter(it)
+            } catch (_: Exception) {
+            }
+        }
         changeHighlighters.forEach {
             try {
                 editor.markupModel.removeHighlighter(it)
@@ -199,5 +246,29 @@ class CollabEditor(
         remoteCursors.dispose()
         remotePointers.dispose()
         scheduler.shutdownNow()
+    }
+}
+
+private class DebugArrowGutterIcon : GutterIconRenderer() {
+    override fun getIcon(): Icon = DebugArrowIcon
+    override fun getTooltipText(): String = "Host debug position"
+    override fun equals(other: Any?): Boolean = other is DebugArrowGutterIcon
+    override fun hashCode(): Int = 0
+}
+
+private object DebugArrowIcon : Icon {
+    private val arrowColor = JBColor(Color(70, 130, 200), Color(100, 170, 240))
+
+    override fun getIconWidth() = 12
+    override fun getIconHeight() = 12
+    override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+        val g2 = g.create() as Graphics2D
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        g2.color = arrowColor
+        // Right-pointing arrow (debug execution indicator)
+        val xPoints = intArrayOf(x + 2, x + 10, x + 2)
+        val yPoints = intArrayOf(y + 1, y + 6, y + 11)
+        g2.fillPolygon(xPoints, yPoints, 3)
+        g2.dispose()
     }
 }

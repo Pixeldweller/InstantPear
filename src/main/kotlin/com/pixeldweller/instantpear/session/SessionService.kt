@@ -23,8 +23,10 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.util.messages.MessageBusConnection
+import com.pixeldweller.instantpear.debug.DebugSyncService
 import com.pixeldweller.instantpear.editor.CollabEditor
 import com.pixeldweller.instantpear.network.PearClient
+import com.pixeldweller.instantpear.protocol.DebugVariable
 import com.pixeldweller.instantpear.protocol.PearMessage
 import com.pixeldweller.instantpear.settings.PearSettings
 
@@ -55,6 +57,15 @@ class SessionService(private val project: Project) {
     val sharedFiles = mutableStateListOf<String>()
     val userFocusMap = mutableStateMapOf<String, UserFocus>()
 
+    // Run/Debug state (observable for UI)
+    val hostRunState = mutableStateOf("idle") // "idle", "running", "debugging"
+    val hostProcessName = mutableStateOf("")
+    val debugFileName = mutableStateOf<String?>(null)
+    val debugLine = mutableStateOf<Int?>(null)
+    val debugVariables = mutableStateListOf<DebugVariable>()
+    // Expanded children: parentPath -> list of children
+    val debugVariableChildren = mutableStateMapOf<String, List<DebugVariable>>()
+
     // Stored for invite link generation
     private var currentServerUrl: String = ""
     private var currentLobbyKey: String = ""
@@ -67,6 +78,7 @@ class SessionService(private val project: Project) {
     private var myUserId: String? = null
     private var myUserName: String = "Developer"
     private var messageBusConnection: MessageBusConnection? = null
+    private var debugSyncService: DebugSyncService? = null
 
     fun createLobby(serverUrl: String, code: String, key: String, userName: String) {
         if (state.value != SessionState.DISCONNECTED) return
@@ -98,6 +110,17 @@ class SessionService(private val project: Project) {
                 )
             )
         }
+
+        // Host: start debug/run sync
+        debugSyncService = DebugSyncService(
+            project = project,
+            sendMessage = { msg ->
+                val enriched = msg.copy(userId = myUserId, userName = myUserName)
+                client?.send(enriched)
+            },
+            getSharedFileIds = { sharedFiles.toSet() }
+        )
+        debugSyncService?.start()
     }
 
     fun joinLobby(serverUrl: String, code: String, key: String, userName: String) {
@@ -461,6 +484,48 @@ class SessionService(private val project: Project) {
                     )
                 }
 
+                PearMessage.RUN_STATE -> {
+                    hostRunState.value = message.runState ?: "idle"
+                    hostProcessName.value = message.processName ?: ""
+                    if (message.runState == "idle") {
+                        clearDebugState()
+                    }
+                }
+
+                PearMessage.DEBUG_POSITION -> {
+                    val fileId = message.fileName
+                    val line = message.line
+                    // Clear previous debug line highlight
+                    debugFileName.value?.let { prevFile ->
+                        collabEditors[prevFile]?.setDebugLine(null)
+                    }
+                    debugFileName.value = fileId
+                    debugLine.value = line
+                    if (fileId != null && line != null) {
+                        collabEditors[fileId]?.setDebugLine(line)
+                    }
+                }
+
+                PearMessage.DEBUG_VARIABLES -> {
+                    debugVariables.clear()
+                    debugVariableChildren.clear()
+                    message.variables?.let { debugVariables.addAll(it) }
+                }
+
+                PearMessage.DEBUG_VARIABLE_CHILDREN -> {
+                    val parentPath = message.variablePath ?: return@invokeLater
+                    debugVariableChildren[parentPath] = message.variables ?: emptyList()
+                }
+
+                PearMessage.DEBUG_INSPECT_VARIABLE -> {
+                    // Host receives inspect request from client
+                    if (isHost.value) {
+                        val varPath = message.variablePath ?: return@invokeLater
+                        val fileId = debugFileName.value ?: return@invokeLater
+                        debugSyncService?.handleInspectVariable(varPath, fileId)
+                    }
+                }
+
                 PearMessage.ERROR -> {
                     statusMessage.value = "Server error: ${message.message}"
                     if (state.value == SessionState.CONNECTING) {
@@ -469,6 +534,26 @@ class SessionService(private val project: Project) {
                 }
             }
         }
+    }
+
+    fun requestInspectVariable(variablePath: String) {
+        if (isHost.value) return // Host doesn't need to request
+        client?.send(
+            PearMessage(
+                type = PearMessage.DEBUG_INSPECT_VARIABLE,
+                variablePath = variablePath,
+                userId = myUserId,
+                userName = myUserName
+            )
+        )
+    }
+
+    private fun clearDebugState() {
+        debugFileName.value?.let { collabEditors[it]?.setDebugLine(null) }
+        debugFileName.value = null
+        debugLine.value = null
+        debugVariables.clear()
+        debugVariableChildren.clear()
     }
 
     private fun openCollabFile(fileName: String, content: String) {
@@ -530,6 +615,8 @@ class SessionService(private val project: Project) {
     }
 
     private fun cleanup() {
+        debugSyncService?.let { Disposer.dispose(it) }
+        debugSyncService = null
         messageBusConnection?.disconnect()
         messageBusConnection = null
         collabEditors.values.forEach { Disposer.dispose(it) }
@@ -546,6 +633,9 @@ class SessionService(private val project: Project) {
         sharedFiles.clear()
         userFocusMap.clear()
         chunkBuffer.clear()
+        hostRunState.value = "idle"
+        hostProcessName.value = ""
+        clearDebugState()
     }
 
     companion object {

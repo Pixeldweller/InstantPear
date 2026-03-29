@@ -1,5 +1,13 @@
 package com.pixeldweller.instantpear.protocol
 
+data class DebugVariable(
+    val name: String,
+    val type: String? = null,
+    val value: String? = null,
+    val hasChildren: Boolean = false,
+    val path: String = ""
+)
+
 data class PearMessage(
     val type: String = "",
     // Lobby
@@ -28,7 +36,13 @@ data class PearMessage(
     // File request
     val filePath: String? = null,
     // Error
-    val message: String? = null
+    val message: String? = null,
+    // Run/Debug state
+    val runState: String? = null,
+    val processName: String? = null,
+    // Debug variables
+    val variables: List<DebugVariable>? = null,
+    val variablePath: String? = null
 ) {
     companion object {
         const val CREATE_LOBBY = "create_lobby"
@@ -46,5 +60,10 @@ data class PearMessage(
         const val USER_JOINED = "user_joined"
         const val USER_LEFT = "user_left"
         const val ERROR = "error"
+        const val RUN_STATE = "run_state"
+        const val DEBUG_POSITION = "debug_position"
+        const val DEBUG_VARIABLES = "debug_variables"
+        const val DEBUG_VARIABLE_CHILDREN = "debug_variable_children"
+        const val DEBUG_INSPECT_VARIABLE = "debug_inspect_variable"
     }
 }
