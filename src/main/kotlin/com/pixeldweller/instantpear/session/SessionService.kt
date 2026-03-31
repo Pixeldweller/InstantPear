@@ -386,6 +386,7 @@ class SessionService(private val project: Project) {
             serverUrl = serverUrl,
             onMessage = ::handleMessage,
             onConnected = onConnected,
+            useSockJS = PearSettings.getInstance().state.useSockJS,
             onDisconnected = { reason ->
                 ApplicationManager.getApplication().invokeLater {
                     cleanup()

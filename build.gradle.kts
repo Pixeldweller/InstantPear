@@ -46,6 +46,14 @@ tasks.register<JavaExec>("runSecureTestServer") {
     standardInput = System.`in`
 }
 
+tasks.register<JavaExec>("runSockJsTestServer") {
+    group = "application"
+    description = "Run the InstantPear SockJS test server"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.pixeldweller.instantpear.server.SockJsTestServerKt")
+    standardInput = System.`in`
+}
+
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {

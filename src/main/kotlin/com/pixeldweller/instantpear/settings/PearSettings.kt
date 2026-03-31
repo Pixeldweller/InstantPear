@@ -15,6 +15,7 @@ class PearSettings : PersistentStateComponent<PearSettings.State> {
         var userName: String = "Developer"
         var focusNewCollabTabs: Boolean = true
         var sendDebugVariables: Boolean = true
+        var useSockJS: Boolean = false
     }
 
     private var myState = State()

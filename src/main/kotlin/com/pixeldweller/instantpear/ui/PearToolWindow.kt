@@ -259,6 +259,16 @@ private fun DisconnectedView(
             settings.state.sendDebugVariables = it
         }
     )
+
+    val useSockJS = remember { mutableStateOf(settings.state.useSockJS) }
+    CheckboxRow(
+        text = "Use SockJS endpoint",
+        checked = useSockJS.value,
+        onCheckedChange = {
+            useSockJS.value = it
+            settings.state.useSockJS = it
+        }
+    )
 }
 
 @Composable
