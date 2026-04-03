@@ -8,10 +8,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -42,6 +45,7 @@ import org.jetbrains.jewel.ui.component.GroupHeader
 import org.jetbrains.jewel.ui.component.OutlinedButton
 import org.jetbrains.jewel.ui.component.Text
 import org.jetbrains.jewel.ui.component.TextField
+import org.jetbrains.jewel.ui.component.VerticalScrollbar
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 
@@ -75,11 +79,17 @@ private fun PearToolWindowContent(project: Project) {
     val debugVariableChildren = session.debugVariableChildren
     val consoleViewport by session.consoleViewport
 
-    Column(
-        modifier = Modifier.padding(12.dp).fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        when (state) {
+    val scrollState = rememberScrollState()
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .padding(end = 8.dp)
+                .padding(12.dp)
+                .fillMaxWidth()
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            when (state) {
             SessionState.DISCONNECTED -> {
                 DisconnectedView(
                     settings = settings,
@@ -132,13 +142,18 @@ private fun PearToolWindowContent(project: Project) {
                     onInspectVariable = { session.requestInspectVariable(it) }
                 )
             }
-        }
+            }
 
-        if (statusMessage.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Text(statusMessage)
-        }
-    }
+            if (statusMessage.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(statusMessage)
+            }
+        } // end Column
+        VerticalScrollbar(
+            adapter = rememberScrollbarAdapter(scrollState),
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight()
+        )
+    } // end Box
 }
 
 @Composable

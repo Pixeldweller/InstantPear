@@ -702,6 +702,7 @@ class SessionService(private val project: Project) {
     }
 
     private fun cleanup() {
+        if (state.value == SessionState.DISCONNECTED) return
         debugSyncService?.let { Disposer.dispose(it) }
         debugSyncService = null
         messageBusConnection?.disconnect()
