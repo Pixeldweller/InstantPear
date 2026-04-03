@@ -8,13 +8,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -45,7 +43,7 @@ import org.jetbrains.jewel.ui.component.GroupHeader
 import org.jetbrains.jewel.ui.component.OutlinedButton
 import org.jetbrains.jewel.ui.component.Text
 import org.jetbrains.jewel.ui.component.TextField
-import org.jetbrains.jewel.ui.component.VerticalScrollbar
+import org.jetbrains.jewel.ui.component.VerticallyScrollableContainer
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 
@@ -80,68 +78,69 @@ private fun PearToolWindowContent(project: Project) {
     val consoleViewport by session.consoleViewport
 
     val scrollState = rememberScrollState()
-    Box(modifier = Modifier.fillMaxSize()) {
+    VerticallyScrollableContainer(
+        scrollState = scrollState,
+        modifier = Modifier.fillMaxSize()
+    ) {
         Column(
             modifier = Modifier
-                .padding(end = 8.dp)
                 .padding(12.dp)
-                .fillMaxWidth()
-                .verticalScroll(scrollState),
+                .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             when (state) {
-            SessionState.DISCONNECTED -> {
-                DisconnectedView(
-                    settings = settings,
-                    onCreateLobby = { url, code, key, name ->
-                        session.createLobby(url, code, key, name)
-                    },
-                    onJoinLobby = { url, code, key, name ->
-                        session.joinLobby(url, code, key, name)
-                    },
-                    onJoinFromLink = { link, name ->
-                        val parsed = InviteLink.parse(link)
-                        if (parsed != null) {
-                            settings.state.userName = name
-                            session.joinLobby(parsed.serverUrl, parsed.code, parsed.key, name)
-                        } else {
-                            session.statusMessage.value = "Invalid invite link"
+                SessionState.DISCONNECTED -> {
+                    DisconnectedView(
+                        settings = settings,
+                        onCreateLobby = { url, code, key, name ->
+                            session.createLobby(url, code, key, name)
+                        },
+                        onJoinLobby = { url, code, key, name ->
+                            session.joinLobby(url, code, key, name)
+                        },
+                        onJoinFromLink = { link, name ->
+                            val parsed = InviteLink.parse(link)
+                            if (parsed != null) {
+                                settings.state.userName = name
+                                session.joinLobby(parsed.serverUrl, parsed.code, parsed.key, name)
+                            } else {
+                                session.statusMessage.value = "Invalid invite link"
+                            }
                         }
-                    }
-                )
-            }
+                    )
+                }
 
-            SessionState.CONNECTING -> {
-                Text("Connecting...")
-            }
+                SessionState.CONNECTING -> {
+                    Text("Connecting...")
+                }
 
-            SessionState.CONNECTED -> {
-                ConnectedView(
-                    isHost = isHost,
-                    lobbyCode = lobbyCode,
-                    sharedFiles = sharedFiles.toList(),
-                    closedCollabFiles = session.closedCollabFiles.toList(),
-                    connectedUsers = connectedUsers.toList(),
-                    userFocusMap = userFocusMap.toMap(),
-                    hostRunState = hostRunState,
-                    hostProcessName = hostProcessName,
-                    debugFileName = debugFileName,
-                    debugLine = debugLine,
-                    debugVariables = debugVariables.toList(),
-                    debugVariableChildren = debugVariableChildren.toMap(),
-                    consoleViewport = consoleViewport,
-                    onLeave = { session.leaveLobby() },
-                    onJumpToUser = { session.jumpToUser(it) },
-                    onReopenFile = { session.reopenFile(it) },
-                    onCopyInviteLink = {
-                        val link = session.getInviteLink()
-                        val clipboard = Toolkit.getDefaultToolkit().systemClipboard
-                        clipboard.setContents(StringSelection(link), null)
-                        session.statusMessage.value = "Invite link copied to clipboard"
-                    },
-                    onInspectVariable = { session.requestInspectVariable(it) }
-                )
-            }
+                SessionState.CONNECTED -> {
+                    ConnectedView(
+                        isHost = isHost,
+                        lobbyCode = lobbyCode,
+                        sharedFiles = sharedFiles.toList(),
+                        closedCollabFiles = session.closedCollabFiles.toList(),
+                        connectedUsers = connectedUsers.toList(),
+                        userFocusMap = userFocusMap.toMap(),
+                        hostRunState = hostRunState,
+                        hostProcessName = hostProcessName,
+                        debugFileName = debugFileName,
+                        debugLine = debugLine,
+                        debugVariables = debugVariables.toList(),
+                        debugVariableChildren = debugVariableChildren.toMap(),
+                        consoleViewport = consoleViewport,
+                        onLeave = { session.leaveLobby() },
+                        onJumpToUser = { session.jumpToUser(it) },
+                        onReopenFile = { session.reopenFile(it) },
+                        onCopyInviteLink = {
+                            val link = session.getInviteLink()
+                            val clipboard = Toolkit.getDefaultToolkit().systemClipboard
+                            clipboard.setContents(StringSelection(link), null)
+                            session.statusMessage.value = "Invite link copied to clipboard"
+                        },
+                        onInspectVariable = { session.requestInspectVariable(it) }
+                    )
+                }
             }
 
             if (statusMessage.isNotEmpty()) {
@@ -149,11 +148,7 @@ private fun PearToolWindowContent(project: Project) {
                 Text(statusMessage)
             }
         } // end Column
-        VerticalScrollbar(
-            adapter = rememberScrollbarAdapter(scrollState),
-            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight()
-        )
-    } // end Box
+    } // end VerticallyScrollableContainer
 }
 
 @Composable

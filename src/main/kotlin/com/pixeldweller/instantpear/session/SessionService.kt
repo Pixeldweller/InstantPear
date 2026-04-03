@@ -703,15 +703,27 @@ class SessionService(private val project: Project) {
 
     private fun cleanup() {
         if (state.value == SessionState.DISCONNECTED) return
-        debugSyncService?.let { Disposer.dispose(it) }
-        debugSyncService = null
-        messageBusConnection?.disconnect()
-        messageBusConnection = null
+
+        // Capture and null-out references immediately so no further callbacks fire
+        val dss = debugSyncService.also { debugSyncService = null }
+        val mbc = messageBusConnection.also { messageBusConnection = null }
+        val c   = client.also { client = null }
+
+        // Dispose/disconnect message-bus resources on a pooled thread.
+        // Disposer.dispose() and MessageBusConnection.disconnect() acquire IntelliJ's
+        // internal message-bus lock, which can be held by a background delivery thread,
+        // causing an EDT deadlock if called synchronously here.
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try { if (dss != null) Disposer.dispose(dss) } catch (_: Exception) {}
+            try { mbc?.disconnect() }                       catch (_: Exception) {}
+            try { c?.disconnect() }                         catch (_: Exception) {}
+        }
+
+        // EDT-bound cleanup: editor listeners, markup, virtual files
         collabEditors.values.forEach { Disposer.dispose(it) }
         collabEditors.clear()
         closeGuestTabs()
-        client?.disconnect()
-        client = null
+
         myUserId = null
         currentServerUrl = ""
         currentLobbyKey = ""
