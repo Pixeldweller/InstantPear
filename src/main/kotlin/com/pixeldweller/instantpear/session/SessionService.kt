@@ -25,6 +25,8 @@ import com.intellij.testFramework.LightVirtualFile
 import com.intellij.util.messages.MessageBusConnection
 import com.pixeldweller.instantpear.debug.DebugSyncService
 import com.pixeldweller.instantpear.editor.CollabEditor
+import com.pixeldweller.instantpear.history.HistoryService
+import com.pixeldweller.instantpear.history.InverseOp
 import com.pixeldweller.instantpear.network.PearClient
 import com.pixeldweller.instantpear.protocol.DebugVariable
 import com.pixeldweller.instantpear.protocol.PearMessage
@@ -72,6 +74,9 @@ class SessionService(private val project: Project) {
     private var currentLobbyKey: String = ""
 
     val closedCollabFiles = mutableStateListOf<String>() // guest-only: files closed by user
+
+    // Host-only edit history. Non-null only when isHost.value.
+    val history = HistoryService()
 
     data class PendingFileRequest(val filePath: String, val requesterId: String, val requesterName: String)
     private val pendingFileRequests = ArrayDeque<PendingFileRequest>()
@@ -297,10 +302,27 @@ class SessionService(private val project: Project) {
 
     private fun attachEditor(fileId: String, editor: Editor) {
         if (collabEditors.containsKey(fileId)) return
-        val ce = CollabEditor(project, editor, fileId) { msg ->
-            val enriched = msg.copy(userId = myUserId, userName = myUserName)
-            client?.send(enriched)
-        }
+        val ce = CollabEditor(
+            project = project,
+            editor = editor,
+            fileId = fileId,
+            sendMessage = { msg ->
+                val enriched = msg.copy(userId = myUserId, userName = myUserName)
+                // Host records its own local edits into history before broadcasting.
+                if (isHost.value && msg.type == PearMessage.DOCUMENT_CHANGE) {
+                    history.record(
+                        userId = myUserId ?: "host",
+                        userName = myUserName,
+                        fileId = msg.fileName ?: fileId,
+                        offset = msg.offset ?: 0,
+                        oldText = msg.oldText ?: "",
+                        newText = msg.newText ?: ""
+                    )
+                }
+                client?.send(enriched)
+            },
+            onUndoRequested = { fid -> requestUndo(fid) }
+        )
         collabEditors[fileId] = ce
         if (fileId !in sharedFiles) {
             sharedFiles.add(fileId)
@@ -486,6 +508,21 @@ class SessionService(private val project: Project) {
 
                 PearMessage.DOCUMENT_CHANGE -> {
                     val fileId = message.fileName ?: return@invokeLater
+                    // Host records remote (guest) edits into history.
+                    if (isHost.value) {
+                        val uid = message.userId ?: return@invokeLater
+                        val uname = message.userName
+                            ?: connectedUsers.find { it.userId == uid }?.userName
+                            ?: "Unknown"
+                        history.record(
+                            userId = uid,
+                            userName = uname,
+                            fileId = fileId,
+                            offset = message.offset ?: 0,
+                            oldText = message.oldText ?: "",
+                            newText = message.newText ?: ""
+                        )
+                    }
                     collabEditors[fileId]?.applyRemoteChange(message)
                 }
 
@@ -616,8 +653,81 @@ class SessionService(private val project: Project) {
                         cleanup()
                     }
                 }
+
+                PearMessage.UNDO_REQUEST -> {
+                    if (!isHost.value) return@invokeLater
+                    val fileId = message.fileName ?: return@invokeLater
+                    val uid = message.userId ?: return@invokeLater
+                    performUndo(fileId, uid, notifyOriginator = uid)
+                }
+
+                PearMessage.HISTORY_REJECT -> {
+                    statusMessage.value = message.message ?: "Undo refused"
+                }
             }
         }
+    }
+
+    /** Called by a CollabEditor when the user presses Ctrl-Z. */
+    private fun requestUndo(fileId: String) {
+        if (state.value != SessionState.CONNECTED) return
+        if (isHost.value) {
+            performUndo(fileId, myUserId ?: "host", notifyOriginator = null)
+        } else {
+            client?.send(
+                PearMessage(
+                    type = PearMessage.UNDO_REQUEST,
+                    fileName = fileId,
+                    userId = myUserId,
+                    userName = myUserName
+                )
+            )
+        }
+    }
+
+    /** Host-side: compute + apply per-user undo, or notify refusal. */
+    private fun performUndo(fileId: String, userId: String, notifyOriginator: String?) {
+        val inverse = history.undoLastByUser(fileId, userId)
+        if (inverse == null) {
+            val msg = "No undoable edit for user, or overlaps another user's edit"
+            if (notifyOriginator == null) {
+                statusMessage.value = msg
+            } else {
+                client?.send(
+                    PearMessage(
+                        type = PearMessage.HISTORY_REJECT,
+                        message = msg,
+                        targetUserId = notifyOriginator
+                    )
+                )
+            }
+            return
+        }
+        applyAndBroadcastInverse(inverse)
+    }
+
+    /** Host-only: restore file to state at [targetOpId]. Reverse-applies tail and caches as alt. */
+    fun restoreToState(fileId: String, targetOpId: Long) {
+        if (!isHost.value) return
+        val inverses = history.restore(fileId, targetOpId)
+        inverses.forEach { applyAndBroadcastInverse(it) }
+        statusMessage.value = "Restored state; alternate branch saved"
+    }
+
+    private fun applyAndBroadcastInverse(inv: InverseOp) {
+        val ce = collabEditors[inv.fileId] ?: return
+        val synthetic = PearMessage(
+            type = PearMessage.DOCUMENT_CHANGE,
+            fileName = inv.fileId,
+            offset = inv.offset,
+            oldLength = inv.oldLength,
+            newText = inv.newText,
+            oldText = "",
+            userId = myUserId,
+            userName = myUserName
+        )
+        ce.applyRemoteChange(synthetic) // applies locally, suppresses listener
+        client?.send(synthetic)          // broadcast to peers
     }
 
     fun requestInspectVariable(variablePath: String) {
@@ -735,6 +845,7 @@ class SessionService(private val project: Project) {
         chunkBuffer.clear()
         closedCollabFiles.clear()
         pendingFileRequests.clear()
+        history.clear()
         hostRunState.value = "idle"
         hostProcessName.value = ""
         clearDebugState()

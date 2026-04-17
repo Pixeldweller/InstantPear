@@ -1,6 +1,9 @@
 package com.pixeldweller.instantpear.editor
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
@@ -11,6 +14,7 @@ import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseMotionListener
 import com.intellij.openapi.editor.event.VisibleAreaListener
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.editor.markup.GutterIconRenderer
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
@@ -32,7 +36,8 @@ class CollabEditor(
     private val project: Project,
     val editor: Editor,
     val fileId: String,
-    private val sendMessage: (PearMessage) -> Unit
+    private val sendMessage: (PearMessage) -> Unit,
+    private val onUndoRequested: ((String) -> Unit)? = null
 ) : Disposable {
     @Volatile
     private var isApplyingRemoteChange = false
@@ -66,7 +71,8 @@ class CollabEditor(
                     fileName = fileId,
                     offset = event.offset,
                     oldLength = event.oldLength,
-                    newText = event.newFragment.toString()
+                    newText = event.newFragment.toString(),
+                    oldText = event.oldFragment.toString()
                 )
             )
         }
@@ -119,6 +125,19 @@ class CollabEditor(
         editor.caretModel.addCaretListener(caretListener)
         editor.addEditorMouseMotionListener(mouseMotionListener)
         editor.scrollingModel.addVisibleAreaListener(scrollListener)
+
+        // Hijack Ctrl-Z / Cmd-Z on this editor so undo routes through collab history.
+        if (onUndoRequested != null) {
+            val ideUndo = ActionManager.getInstance().getAction(IdeActions.ACTION_UNDO)
+            if (ideUndo != null) {
+                val interceptor = object : DumbAwareAction() {
+                    override fun actionPerformed(e: AnActionEvent) {
+                        onUndoRequested.invoke(fileId)
+                    }
+                }
+                interceptor.registerCustomShortcutSet(ideUndo.shortcutSet, editor.contentComponent, this)
+            }
+        }
     }
 
     fun applyRemoteChange(message: PearMessage) {

@@ -24,6 +24,11 @@ data class PearMessage(
     val offset: Int? = null,
     val oldLength: Int? = null,
     val newText: String? = null,
+    val oldText: String? = null,
+    val opId: Long? = null,
+    // History
+    val historyTargetId: Long? = null,
+    val historyBranch: String? = null, // "main" or "alt"
     // Cursor
     val cursorOffset: Int? = null,
     val selectionStart: Int? = null,
@@ -70,5 +75,8 @@ data class PearMessage(
         const val DEBUG_VARIABLE_CHILDREN = "debug_variable_children"
         const val DEBUG_INSPECT_VARIABLE = "debug_inspect_variable"
         const val CONSOLE_VIEWPORT = "console_viewport"
+        const val UNDO_REQUEST = "undo_request"
+        const val HISTORY_RESTORE = "history_restore"
+        const val HISTORY_REJECT = "history_reject"
     }
 }

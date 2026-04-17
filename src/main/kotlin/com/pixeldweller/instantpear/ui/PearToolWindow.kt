@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.sp
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.pixeldweller.instantpear.history.EditOp
+import com.pixeldweller.instantpear.history.HistoryService
 import com.pixeldweller.instantpear.protocol.InviteLink
 import com.pixeldweller.instantpear.protocol.DebugVariable
 import com.pixeldweller.instantpear.session.RemoteUser
@@ -36,6 +38,9 @@ import com.pixeldweller.instantpear.session.SessionService
 import com.pixeldweller.instantpear.session.SessionState
 import com.pixeldweller.instantpear.session.UserFocus
 import com.pixeldweller.instantpear.settings.PearSettings
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import org.jetbrains.jewel.bridge.addComposeTab
 import org.jetbrains.jewel.ui.component.CheckboxRow
 import org.jetbrains.jewel.ui.component.DefaultButton
@@ -129,6 +134,7 @@ private fun PearToolWindowContent(project: Project) {
                         debugVariables = debugVariables.toList(),
                         debugVariableChildren = debugVariableChildren.toMap(),
                         consoleViewport = consoleViewport,
+                        history = session.history,
                         onLeave = { session.leaveLobby() },
                         onJumpToUser = { session.jumpToUser(it) },
                         onReopenFile = { session.reopenFile(it) },
@@ -138,7 +144,8 @@ private fun PearToolWindowContent(project: Project) {
                             clipboard.setContents(StringSelection(link), null)
                             session.statusMessage.value = "Invite link copied to clipboard"
                         },
-                        onInspectVariable = { session.requestInspectVariable(it) }
+                        onInspectVariable = { session.requestInspectVariable(it) },
+                        onRestoreState = { fileId, opId -> session.restoreToState(fileId, opId) }
                     )
                 }
             }
@@ -296,11 +303,13 @@ private fun ConnectedView(
     debugVariables: List<DebugVariable>,
     debugVariableChildren: Map<String, List<DebugVariable>>,
     consoleViewport: String,
+    history: HistoryService,
     onLeave: () -> Unit,
     onJumpToUser: (userId: String) -> Unit,
     onReopenFile: (fileId: String) -> Unit,
     onCopyInviteLink: () -> Unit,
-    onInspectVariable: (variablePath: String) -> Unit
+    onInspectVariable: (variablePath: String) -> Unit,
+    onRestoreState: (fileId: String, opId: Long) -> Unit
 ) {
     GroupHeader(if (isHost) "Hosting Session" else "Collaborative Session")
 
@@ -425,10 +434,131 @@ private fun ConnectedView(
         }
     }
 
+    if (isHost) {
+        Spacer(Modifier.height(8.dp))
+        HistoryPanel(
+            history = history,
+            sharedFiles = sharedFiles,
+            onRestore = onRestoreState
+        )
+    }
+
     Spacer(Modifier.height(8.dp))
 
     OutlinedButton(onClick = onLeave) {
         Text("Leave Lobby")
+    }
+}
+
+private val historyTimeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+
+@Composable
+private fun HistoryPanel(
+    history: HistoryService,
+    sharedFiles: List<String>,
+    onRestore: (fileId: String, opId: Long) -> Unit
+) {
+    GroupHeader("Edit History")
+
+    if (sharedFiles.isEmpty()) {
+        Text("No shared files yet.")
+        return
+    }
+
+    val selectedFile = remember { mutableStateOf(sharedFiles.first()) }
+    if (selectedFile.value !in sharedFiles) selectedFile.value = sharedFiles.first()
+
+    // File picker row
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        sharedFiles.forEach { f ->
+            val isSel = f == selectedFile.value
+            if (isSel) {
+                DefaultButton(onClick = { selectedFile.value = f }) { Text(f, fontSize = 10.sp) }
+            } else {
+                OutlinedButton(onClick = { selectedFile.value = f }) { Text(f, fontSize = 10.sp) }
+            }
+        }
+    }
+
+    val fileId = selectedFile.value
+    val fh = history.histories[fileId]
+
+    val selectedTab = remember { mutableStateOf("main") } // "main" | "alt"
+    val altAvailable = fh?.alt?.value != null
+
+    Spacer(Modifier.height(4.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (selectedTab.value == "main") {
+            DefaultButton(onClick = { selectedTab.value = "main" }) { Text("Main", fontSize = 10.sp) }
+        } else {
+            OutlinedButton(onClick = { selectedTab.value = "main" }) { Text("Main", fontSize = 10.sp) }
+        }
+        if (altAvailable) {
+            if (selectedTab.value == "alt") {
+                DefaultButton(onClick = { selectedTab.value = "alt" }) { Text("Alternate", fontSize = 10.sp) }
+            } else {
+                OutlinedButton(onClick = { selectedTab.value = "alt" }) { Text("Alternate", fontSize = 10.sp) }
+            }
+        } else {
+            Text("(no alt branch)", fontSize = 10.sp)
+        }
+    }
+
+    Spacer(Modifier.height(4.dp))
+
+    val ops: List<EditOp> = when {
+        fh == null -> emptyList()
+        selectedTab.value == "alt" -> fh.alt.value ?: emptyList()
+        else -> fh.main.toList()
+    }
+
+    if (ops.isEmpty()) {
+        Text("No edits recorded.", fontSize = 10.sp)
+        return
+    }
+
+    // Show newest first
+    ops.asReversed().forEach { op ->
+        val time = historyTimeFormat.format(Date(op.timestamp))
+        val preview = buildPreview(op)
+        val restorable = selectedTab.value == "main" && !op.undone
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 1.dp)
+                .then(
+                    if (restorable) Modifier.clickable { onRestore(fileId, op.id) }
+                    else Modifier
+                ),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val marker = if (op.undone) "[undone] " else ""
+            Text(
+                text = "$time  ${op.userName}  $marker$preview",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                modifier = Modifier.weight(1f)
+            )
+            if (restorable) {
+                Text("restore", fontSize = 9.sp)
+            }
+        }
+    }
+}
+
+private fun buildPreview(op: EditOp): String {
+    val maxLen = 30
+    fun clip(s: String) = s.replace('\n', '\u23CE').let {
+        if (it.length > maxLen) it.take(maxLen) + "..." else it
+    }
+    return when {
+        op.oldText.isEmpty() && op.newText.isNotEmpty() -> "ins@${op.offset}: \"${clip(op.newText)}\""
+        op.newText.isEmpty() && op.oldText.isNotEmpty() -> "del@${op.offset}: \"${clip(op.oldText)}\""
+        else -> "rep@${op.offset}: \"${clip(op.oldText)}\" -> \"${clip(op.newText)}\""
     }
 }
 
