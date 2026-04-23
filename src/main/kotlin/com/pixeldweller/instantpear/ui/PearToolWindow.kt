@@ -33,6 +33,7 @@ import com.pixeldweller.instantpear.history.EditOp
 import com.pixeldweller.instantpear.history.HistoryService
 import com.pixeldweller.instantpear.protocol.InviteLink
 import com.pixeldweller.instantpear.protocol.DebugVariable
+import com.pixeldweller.instantpear.overlay.ScreenshareService
 import com.pixeldweller.instantpear.session.RemoteUser
 import com.pixeldweller.instantpear.session.SessionService
 import com.pixeldweller.instantpear.session.SessionState
@@ -65,6 +66,7 @@ class PearToolWindowFactory : ToolWindowFactory {
 @Composable
 private fun PearToolWindowContent(project: Project) {
     val session = remember { SessionService.getInstance(project) }
+    val screenshare = remember { ScreenshareService.getInstance(project) }
     val settings = remember { PearSettings.getInstance() }
 
     val state by session.state
@@ -83,6 +85,8 @@ private fun PearToolWindowContent(project: Project) {
     val consoleViewport by session.consoleViewport
     val undoHints = session.undoHints
 
+    val selectedTab = remember { mutableStateOf("coding") }
+
     val scrollState = rememberScrollState()
     VerticallyScrollableContainer(
         scrollState = scrollState,
@@ -94,71 +98,166 @@ private fun PearToolWindowContent(project: Project) {
                 .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            when (state) {
-                SessionState.DISCONNECTED -> {
-                    DisconnectedView(
-                        settings = settings,
-                        onCreateLobby = { url, code, key, name ->
-                            session.createLobby(url, code, key, name)
-                        },
-                        onJoinLobby = { url, code, key, name ->
-                            session.joinLobby(url, code, key, name)
-                        },
-                        onJoinFromLink = { link, name ->
-                            val parsed = InviteLink.parse(link)
-                            if (parsed != null) {
-                                settings.state.userName = name
-                                session.joinLobby(parsed.serverUrl, parsed.code, parsed.key, name)
-                            } else {
-                                session.statusMessage.value = "Invalid invite link"
-                            }
-                        }
-                    )
-                }
+            // Shared connection header — same name + server URL for both flows.
+            ConnectionHeader(settings)
 
-                SessionState.CONNECTING -> {
-                    Text("Connecting...")
-                }
+            Spacer(Modifier.height(8.dp))
+            TabBar(selectedTab)
+            Spacer(Modifier.height(8.dp))
 
-                SessionState.CONNECTED -> {
-                    ConnectedView(
-                        isHost = isHost,
-                        lobbyCode = lobbyCode,
-                        sharedFiles = sharedFiles.toList(),
-                        closedCollabFiles = session.closedCollabFiles.toList(),
-                        connectedUsers = connectedUsers.toList(),
-                        userFocusMap = userFocusMap.toMap(),
-                        hostRunState = hostRunState,
-                        hostProcessName = hostProcessName,
-                        debugFileName = debugFileName,
-                        debugLine = debugLine,
-                        debugVariables = debugVariables.toList(),
-                        debugVariableChildren = debugVariableChildren.toMap(),
-                        consoleViewport = consoleViewport,
-                        history = session.history,
-                        undoHints = undoHints.toMap(),
-                        onLeave = { session.leaveLobby() },
-                        onJumpToUser = { session.jumpToUser(it) },
-                        onReopenFile = { session.reopenFile(it) },
-                        onCopyInviteLink = {
-                            val link = session.getInviteLink()
-                            val clipboard = Toolkit.getDefaultToolkit().systemClipboard
-                            clipboard.setContents(StringSelection(link), null)
-                            session.statusMessage.value = "Invite link copied to clipboard"
-                        },
-                        onInspectVariable = { session.requestInspectVariable(it) },
-                        onRestoreState = { fileId, opId -> session.restoreToState(fileId, opId) },
-                        onRestoreBaseline = { fileId -> session.restoreToBaseline(fileId) }
-                    )
-                }
+            when (selectedTab.value) {
+                "coding" -> CodingTabContent(
+                    session = session,
+                    settings = settings,
+                    state = state,
+                    isHost = isHost,
+                    lobbyCode = lobbyCode,
+                    connectedUsers = connectedUsers.toList(),
+                    sharedFiles = sharedFiles.toList(),
+                    closedCollabFiles = session.closedCollabFiles.toList(),
+                    userFocusMap = userFocusMap.toMap(),
+                    hostRunState = hostRunState,
+                    hostProcessName = hostProcessName,
+                    debugFileName = debugFileName,
+                    debugLine = debugLine,
+                    debugVariables = debugVariables.toList(),
+                    debugVariableChildren = debugVariableChildren.toMap(),
+                    consoleViewport = consoleViewport,
+                    undoHints = undoHints.toMap(),
+                )
+
+                "screenshare" -> ScreensharePanel(
+                    screenshare = screenshare,
+                    defaultUserName = settings.state.userName,
+                )
             }
 
             if (statusMessage.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Text(statusMessage)
             }
-        } // end Column
-    } // end VerticallyScrollableContainer
+        }
+    }
+}
+
+@Composable
+private fun ConnectionHeader(settings: PearSettings) {
+    val nameState = rememberTextFieldState(settings.state.userName)
+    val urlState = rememberTextFieldState(settings.state.serverUrl)
+    val sockJs = remember { mutableStateOf(settings.state.useSockJS) }
+
+    GroupHeader("Connection")
+
+    Text("Your Name")
+    TextField(
+        state = nameState,
+        modifier = Modifier.fillMaxWidth(),
+        placeholder = { Text("Developer") }
+    )
+
+    Text("Server URL")
+    TextField(
+        state = urlState,
+        modifier = Modifier.fillMaxWidth(),
+        placeholder = { Text("ws://host:9274/ws") }
+    )
+
+    CheckboxRow(
+        text = "Use SockJS endpoint",
+        checked = sockJs.value,
+        onCheckedChange = {
+            sockJs.value = it
+            settings.state.useSockJS = it
+        }
+    )
+
+    // Persist on every recomposition so the current field values are always
+    // available to Start Screenshare / Create / Join without requiring an
+    // explicit commit button.
+    settings.state.userName = nameState.text.toString()
+    settings.state.serverUrl = urlState.text.toString()
+}
+
+@Composable
+private fun TabBar(selected: androidx.compose.runtime.MutableState<String>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TabButton("Coding Lobby", selected.value == "coding") { selected.value = "coding" }
+        TabButton("Screenshare Lobby", selected.value == "screenshare") { selected.value = "screenshare" }
+    }
+}
+
+@Composable
+private fun TabButton(label: String, active: Boolean, onClick: () -> Unit) {
+    if (active) DefaultButton(onClick = onClick) { Text(label) }
+    else OutlinedButton(onClick = onClick) { Text(label) }
+}
+
+@Composable
+private fun CodingTabContent(
+    session: SessionService,
+    settings: PearSettings,
+    state: SessionState,
+    isHost: Boolean,
+    lobbyCode: String,
+    connectedUsers: List<RemoteUser>,
+    sharedFiles: List<String>,
+    closedCollabFiles: List<String>,
+    userFocusMap: Map<String, UserFocus>,
+    hostRunState: String,
+    hostProcessName: String,
+    debugFileName: String?,
+    debugLine: Int?,
+    debugVariables: List<DebugVariable>,
+    debugVariableChildren: Map<String, List<DebugVariable>>,
+    consoleViewport: String,
+    undoHints: Map<String, String>,
+) {
+    when (state) {
+        SessionState.DISCONNECTED -> DisconnectedView(
+            settings = settings,
+            onCreateLobby = { url, code, key, name -> session.createLobby(url, code, key, name) },
+            onJoinLobby = { url, code, key, name -> session.joinLobby(url, code, key, name) },
+            onJoinFromLink = { link, name ->
+                val parsed = InviteLink.parse(link)
+                if (parsed != null) {
+                    settings.state.userName = name
+                    session.joinLobby(parsed.serverUrl, parsed.code, parsed.key, name)
+                } else {
+                    session.statusMessage.value = "Invalid invite link"
+                }
+            }
+        )
+        SessionState.CONNECTING -> Text("Connecting...")
+        SessionState.CONNECTED -> ConnectedView(
+            isHost = isHost,
+            lobbyCode = lobbyCode,
+            sharedFiles = sharedFiles,
+            closedCollabFiles = closedCollabFiles,
+            connectedUsers = connectedUsers,
+            userFocusMap = userFocusMap,
+            hostRunState = hostRunState,
+            hostProcessName = hostProcessName,
+            debugFileName = debugFileName,
+            debugLine = debugLine,
+            debugVariables = debugVariables,
+            debugVariableChildren = debugVariableChildren,
+            consoleViewport = consoleViewport,
+            history = session.history,
+            undoHints = undoHints,
+            onLeave = { session.leaveLobby() },
+            onJumpToUser = { session.jumpToUser(it) },
+            onReopenFile = { session.reopenFile(it) },
+            onCopyInviteLink = {
+                val link = session.getInviteLink()
+                val clipboard = Toolkit.getDefaultToolkit().systemClipboard
+                clipboard.setContents(StringSelection(link), null)
+                session.statusMessage.value = "Invite link copied to clipboard"
+            },
+            onInspectVariable = { session.requestInspectVariable(it) },
+            onRestoreState = { fileId, opId -> session.restoreToState(fileId, opId) },
+            onRestoreBaseline = { fileId -> session.restoreToBaseline(fileId) }
+        )
+    }
 }
 
 @Composable
@@ -168,22 +267,10 @@ private fun DisconnectedView(
     onJoinLobby: (serverUrl: String, code: String, key: String, userName: String) -> Unit,
     onJoinFromLink: (link: String, userName: String) -> Unit
 ) {
-    val serverUrlState = rememberTextFieldState(settings.state.serverUrl)
-    val userNameState = rememberTextFieldState(settings.state.userName)
     val codeState = rememberTextFieldState()
     val keyState = rememberTextFieldState()
     val inviteLinkState = rememberTextFieldState()
 
-    GroupHeader("Connection")
-
-    Text("Your Name")
-    TextField(
-        state = userNameState,
-        modifier = Modifier.fillMaxWidth(),
-        placeholder = { Text("Developer") }
-    )
-
-    Spacer(Modifier.height(8.dp))
     GroupHeader("Quick Join")
 
     Text("Invite Link")
@@ -196,23 +283,12 @@ private fun DisconnectedView(
     val linkText = inviteLinkState.text.toString()
 
     DefaultButton(
-        onClick = {
-            val name = userNameState.text.toString()
-            settings.state.userName = name
-            onJoinFromLink(linkText, name)
-        },
+        onClick = { onJoinFromLink(linkText, settings.state.userName) },
         enabled = linkText.isNotBlank()
     ) { Text("Join from Link") }
 
     Spacer(Modifier.height(8.dp))
     GroupHeader("Manual")
-
-    Text("Server URL")
-    TextField(
-        state = serverUrlState,
-        modifier = Modifier.fillMaxWidth(),
-        placeholder = { Text("ws://localhost:9274") }
-    )
 
     Text("Lobby Code")
     TextField(
@@ -236,29 +312,25 @@ private fun DisconnectedView(
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         DefaultButton(
             onClick = {
-                val url = serverUrlState.text.toString()
-                val name = userNameState.text.toString()
-                settings.state.serverUrl = url
-                settings.state.userName = name
-                onCreateLobby(url, codeText, keyText, name)
+                onCreateLobby(
+                    settings.state.serverUrl, codeText, keyText, settings.state.userName,
+                )
             },
             enabled = codeText.isNotBlank() && keyText.isNotBlank()
         ) { Text("Create Lobby") }
 
         OutlinedButton(
             onClick = {
-                val url = serverUrlState.text.toString()
-                val name = userNameState.text.toString()
-                settings.state.serverUrl = url
-                settings.state.userName = name
-                onJoinLobby(url, codeText, keyText, name)
+                onJoinLobby(
+                    settings.state.serverUrl, codeText, keyText, settings.state.userName,
+                )
             },
             enabled = codeText.isNotBlank() && keyText.isNotBlank()
         ) { Text("Join Lobby") }
     }
 
     Spacer(Modifier.height(8.dp))
-    GroupHeader("Settings")
+    GroupHeader("Coding Settings")
 
     val focusNewTabs = remember { mutableStateOf(settings.state.focusNewCollabTabs) }
     CheckboxRow(
@@ -277,16 +349,6 @@ private fun DisconnectedView(
         onCheckedChange = {
             sendDebugVars.value = it
             settings.state.sendDebugVariables = it
-        }
-    )
-
-    val useSockJS = remember { mutableStateOf(settings.state.useSockJS) }
-    CheckboxRow(
-        text = "Use SockJS endpoint",
-        checked = useSockJS.value,
-        onCheckedChange = {
-            useSockJS.value = it
-            settings.state.useSockJS = it
         }
     )
 }
@@ -657,5 +719,120 @@ private fun DebugVariableList(
                 onInspect = onInspect
             )
         }
+    }
+}
+
+@Composable
+private fun ScreensharePanel(
+    screenshare: ScreenshareService,
+    defaultUserName: String,
+) {
+    val running by screenshare.running
+    val invite by screenshare.inviteLink
+    val status by screenshare.statusMessage
+    val keyState = rememberTextFieldState()
+    val settings = remember { PearSettings.getInstance() }
+    val httpsState = remember { mutableStateOf(settings.state.screenshareHttps) }
+    val httpsPortState = rememberTextFieldState(settings.state.screenshareHttpsPort.toString())
+
+    GroupHeader("Screenshare Lobby (OS overlay)")
+
+    if (running) {
+        Text("Lobby is live. Share this link with guests:")
+        Text(invite, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+        Text(
+            "Hover a note on the overlay to drag it, ⧉ copies, ✕ removes.",
+            fontSize = 10.sp
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                val clipboard = Toolkit.getDefaultToolkit().systemClipboard
+                clipboard.setContents(StringSelection(invite), null)
+            }) { Text("Copy Link") }
+            OutlinedButton(onClick = { screenshare.stop() }) { Text("Stop Screenshare") }
+        }
+    } else {
+        Text("Lobby key (optional)")
+        TextField(
+            state = keyState,
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("leave empty for open lobby") }
+        )
+        Spacer(Modifier.height(4.dp))
+        CheckboxRow(
+            text = "Use HTTPS (required if server is not on localhost)",
+            checked = httpsState.value,
+            onCheckedChange = {
+                httpsState.value = it
+                settings.state.screenshareHttps = it
+            }
+        )
+        if (httpsState.value) {
+            Text("HTTPS port")
+            TextField(
+                state = httpsPortState,
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("9275") }
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+        TurnSettings(settings)
+
+        Spacer(Modifier.height(4.dp))
+        DefaultButton(onClick = {
+            val name = defaultUserName.ifBlank { "Host" }
+            settings.state.screenshareHttpsPort =
+                httpsPortState.text.toString().toIntOrNull() ?: 9275
+            screenshare.start(name, keyState.text.toString())
+        }) { Text("Start Screenshare Lobby") }
+    }
+
+    if (status.isNotEmpty()) {
+        Spacer(Modifier.height(4.dp))
+        Text(status, fontSize = 10.sp)
+    }
+}
+
+@Composable
+private fun TurnSettings(settings: PearSettings) {
+    val enabled = remember { mutableStateOf(settings.state.turnEnabled) }
+    val urlState = rememberTextFieldState(settings.state.turnUrl)
+    val userState = rememberTextFieldState(settings.state.turnUsername)
+    val passState = rememberTextFieldState(settings.state.turnPassword)
+
+    GroupHeader("TURN server (optional)")
+    CheckboxRow(
+        text = "Enable TURN (relay WebRTC when ICE fails)",
+        checked = enabled.value,
+        onCheckedChange = {
+            enabled.value = it
+            settings.state.turnEnabled = it
+        }
+    )
+    if (enabled.value) {
+        Text("TURN URL")
+        TextField(
+            state = urlState,
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("turn:host.example.com:3478") }
+        )
+        Text("Username")
+        TextField(
+            state = userState,
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("pear") }
+        )
+        Text("Password")
+        TextField(
+            state = passState,
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("pearpass") }
+        )
+        // Persist on any blur; TextFieldState doesn't expose onFocusChanged here so
+        // snapshot into settings right now so the next Start sees current values.
+        settings.state.turnUrl = urlState.text.toString()
+        settings.state.turnUsername = userState.text.toString()
+        settings.state.turnPassword = passState.text.toString()
     }
 }

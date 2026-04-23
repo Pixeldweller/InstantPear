@@ -51,7 +51,23 @@ data class PearMessage(
     val variables: List<DebugVariable>? = null,
     val variablePath: String? = null,
     // Console viewport
-    val consoleText: String? = null
+    val consoleText: String? = null,
+    // Overlay annotations (normalized 0..1 screen coords)
+    val nx: Double? = null,
+    val ny: Double? = null,
+    val color: String? = null,
+    val text: String? = null,
+    val noteId: String? = null,
+    // WebRTC signaling
+    val sdp: String? = null,
+    val sdpType: String? = null,
+    val candidate: String? = null,
+    val sdpMid: String? = null,
+    val sdpMLineIndex: Int? = null,
+    // Screenshare meta
+    val observer: Boolean? = null,
+    val captureWidth: Int? = null,
+    val captureHeight: Int? = null
 ) {
     companion object {
         const val CREATE_LOBBY = "create_lobby"
@@ -81,5 +97,17 @@ data class PearMessage(
         const val HISTORY_RESTORE = "history_restore"
         const val HISTORY_REJECT = "history_reject"
         const val UNDO_HINT = "undo_hint"
+        // Overlay annotations (screenshare lobbies)
+        const val OVERLAY_CURSOR = "cursor"
+        const val OVERLAY_CLICK = "click"
+        const val OVERLAY_NOTE = "note"
+        const val OVERLAY_NOTE_DELETE = "note_delete"
+        const val OVERLAY_HINT = "hint"
+        // WebRTC signaling
+        const val WEBRTC_OFFER = "webrtc_offer"
+        const val WEBRTC_ANSWER = "webrtc_answer"
+        const val WEBRTC_ICE = "webrtc_ice"
+        const val WEBRTC_READY = "webrtc_ready"
+        const val CAPTURE_INFO = "capture_info"
     }
 }

@@ -1,3 +1,110 @@
+# InstantPear
+
+Collaborative pair-programming plugin for IntelliJ with a separate screenshare
+lobby that renders guest annotations (ghost cursors, click ripples, sticky
+notes, attention hints) as a **native, click-through OS overlay** above all
+applications on the host machine.
+
+## Screenshare architecture
+
+```
+Host (IDE + plugin)                 Guests (Firefox)
+┌───────────────────────┐           ┌───────────────────────┐
+│  Plugin                │           │  overlay.html          │
+│  ├─ PearClient (WS)    │  WS       │  ├─ RTCPeerConnection  │
+│  │   (observer)        │◀─────────▶│  │   (view video)      │
+│  ├─ OverlayWindow JNA  │  lobby    │  └─ annotation input   │
+│  │   (Win32 layered)   │  relay    │                        │
+│  └─ BrowserUtil.browse │           └───────────▲────────────┘
+│       ↓                │                       │ WebRTC
+│  System Firefox        │                       │
+│  ├─ getDisplayMedia    │                       │
+│  └─ RTCPeerConnection ─┼───────────────────────┘
+└───────────────────────┘
+```
+
+- Host IDE spawns the user's system default browser pointed at the host page.
+- Firefox captures the chosen display and serves it to each guest over WebRTC.
+- Plugin joins the same lobby as a silent *observer* so the OS overlay can
+  render annotations that guests send.
+
+## LAN WebRTC preparation
+
+WebRTC establishes a direct peer-to-peer connection via ICE. On a LAN this
+relies on **host candidates** (raw `192.168.x.y:port`). Firefox obfuscates
+those candidates into `*.local` mDNS names by default, which fails to resolve
+between peers on many networks and results in `ICE failed`.
+
+Two options:
+
+1. **Disable mDNS candidate obfuscation in Firefox** — on **every**
+   participating Firefox (host + every guest):
+   - `about:config`, accept the prompt.
+   - Set `media.peerconnection.ice.obfuscate_host_addresses` → `false`.
+   - Restart Firefox.
+   - Peers now exchange raw LAN IPs as ICE candidates and connect directly.
+   - Trade-off: exposes the LAN IP to the other lobby members.
+
+2. **Run a TURN server** so ICE falls back to a relay candidate that doesn't
+   need host-candidate resolution. See below for the configuration flag.
+
+If you can't touch browser config and don't want a TURN service, use (2).
+
+## coturn TURN server configuration
+
+A config flag in the plugin settings (default **off**) controls whether ICE
+candidates advertised to the browser include a TURN server. When on, both the
+host page and every guest page receive the TURN URL + credentials via URL
+parameters and append the TURN entry to `RTCPeerConnection.iceServers`.
+
+### Plugin settings (InstantPear tool window → *TURN server*)
+
+| Field            | Example                          |
+|------------------|----------------------------------|
+| Enable TURN      | `false` by default               |
+| TURN URL         | `turn:screenshare.example.com:3478` |
+| TURN Username    | `pear`                           |
+| TURN Password    | `pearpass`                       |
+
+Leaving TURN off keeps the client on STUN-only (suitable once mDNS is
+disabled).
+
+### Installing coturn on Linux
+
+```bash
+sudo apt install coturn
+sudo sed -i 's/#TURNSERVER_ENABLED=1/TURNSERVER_ENABLED=1/' /etc/default/coturn
+```
+
+Minimal `/etc/turnserver.conf`:
+
+```
+listening-port=3478
+min-port=49160
+max-port=49200
+fingerprint
+lt-cred-mech
+realm=pear.local
+user=pear:pearpass
+no-tls
+no-dtls
+external-ip=<server-public-or-lan-ip>
+```
+
+Open firewall ports:
+
+```bash
+sudo ufw allow 3478/udp
+sudo ufw allow 49160:49200/udp
+sudo systemctl enable --now coturn
+```
+
+Fill the matching URL/user/pass into the plugin settings, toggle *Enable
+TURN*, then start a new lobby. Guests that fail to reach each other directly
+will transparently fall back to relaying through coturn.
+
+---
+
 # IntelliJ Platform Plugin Template
 
 [![Twitter Follow](https://img.shields.io/badge/follow-%40JBPlatform-1DA1F2?logo=twitter)](https://twitter.com/JBPlatform)

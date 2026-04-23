@@ -19,6 +19,12 @@ repositories {
 dependencies {
     implementation("org.java-websocket:Java-WebSocket:1.5.7")
     implementation("com.google.code.gson:gson:2.11.0")
+    // JNA is bundled with the IntelliJ Platform. Including it as
+    // `implementation` ships a second copy and the plugin classloader ends
+    // up with a half-initialized com.sun.jna.Native (native lib extraction
+    // path collides). Use compileOnly so the platform provides it at runtime.
+    compileOnly("net.java.dev.jna:jna:5.14.0")
+    compileOnly("net.java.dev.jna:jna-platform:5.14.0")
 
     intellijPlatform {
         intellijIdea("2025.3.4")
@@ -76,6 +82,7 @@ tasks {
         sourceCompatibility = "21"
         targetCompatibility = "21"
     }
+
 }
 
 kotlin {

@@ -11,11 +11,17 @@ import com.intellij.openapi.components.Storage
 class PearSettings : PersistentStateComponent<PearSettings.State> {
 
     class State {
-        var serverUrl: String = "ws://localhost:9274"
+        var serverUrl: String = "ws://localhost:9274/ws"
         var userName: String = "Developer"
         var focusNewCollabTabs: Boolean = true
         var sendDebugVariables: Boolean = true
         var useSockJS: Boolean = false
+        var screenshareHttps: Boolean = true
+        var screenshareHttpsPort: Int = 9275
+        var turnEnabled: Boolean = false
+        var turnUrl: String = ""
+        var turnUsername: String = ""
+        var turnPassword: String = ""
     }
 
     private var myState = State()
