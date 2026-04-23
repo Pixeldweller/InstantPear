@@ -28,7 +28,9 @@ data class PearMessage(
     val opId: Long? = null,
     // History
     val historyTargetId: Long? = null,
-    val historyBranch: String? = null, // "main" or "alt"
+    val historyBranch: String? = null, // "applied" or "displaced"
+    val hintPreview: String? = null,
+    val hintAvailable: Boolean? = null,
     // Cursor
     val cursorOffset: Int? = null,
     val selectionStart: Int? = null,
@@ -78,5 +80,6 @@ data class PearMessage(
         const val UNDO_REQUEST = "undo_request"
         const val HISTORY_RESTORE = "history_restore"
         const val HISTORY_REJECT = "history_reject"
+        const val UNDO_HINT = "undo_hint"
     }
 }

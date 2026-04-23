@@ -81,6 +81,7 @@ private fun PearToolWindowContent(project: Project) {
     val debugVariables = session.debugVariables
     val debugVariableChildren = session.debugVariableChildren
     val consoleViewport by session.consoleViewport
+    val undoHints = session.undoHints
 
     val scrollState = rememberScrollState()
     VerticallyScrollableContainer(
@@ -135,6 +136,7 @@ private fun PearToolWindowContent(project: Project) {
                         debugVariableChildren = debugVariableChildren.toMap(),
                         consoleViewport = consoleViewport,
                         history = session.history,
+                        undoHints = undoHints.toMap(),
                         onLeave = { session.leaveLobby() },
                         onJumpToUser = { session.jumpToUser(it) },
                         onReopenFile = { session.reopenFile(it) },
@@ -145,7 +147,8 @@ private fun PearToolWindowContent(project: Project) {
                             session.statusMessage.value = "Invite link copied to clipboard"
                         },
                         onInspectVariable = { session.requestInspectVariable(it) },
-                        onRestoreState = { fileId, opId -> session.restoreToState(fileId, opId) }
+                        onRestoreState = { fileId, opId -> session.restoreToState(fileId, opId) },
+                        onRestoreBaseline = { fileId -> session.restoreToBaseline(fileId) }
                     )
                 }
             }
@@ -304,12 +307,14 @@ private fun ConnectedView(
     debugVariableChildren: Map<String, List<DebugVariable>>,
     consoleViewport: String,
     history: HistoryService,
+    undoHints: Map<String, String>,
     onLeave: () -> Unit,
     onJumpToUser: (userId: String) -> Unit,
     onReopenFile: (fileId: String) -> Unit,
     onCopyInviteLink: () -> Unit,
     onInspectVariable: (variablePath: String) -> Unit,
-    onRestoreState: (fileId: String, opId: Long) -> Unit
+    onRestoreState: (fileId: String, opId: Long) -> Unit,
+    onRestoreBaseline: (fileId: String) -> Unit
 ) {
     GroupHeader(if (isHost) "Hosting Session" else "Collaborative Session")
 
@@ -422,7 +427,6 @@ private fun ConnectedView(
                 .fillMaxWidth()
                 .background(Color(0xFF1E1E1E))
                 .padding(6.dp)
-                .verticalScroll(rememberScrollState())
                 .horizontalScroll(rememberScrollState())
         ) {
             Text(
@@ -434,12 +438,25 @@ private fun ConnectedView(
         }
     }
 
+    if (undoHints.isNotEmpty()) {
+        Spacer(Modifier.height(6.dp))
+        GroupHeader("Next Ctrl-Z")
+        undoHints.forEach { (fileId, preview) ->
+            Text(
+                text = "$fileId: $preview",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp
+            )
+        }
+    }
+
     if (isHost) {
         Spacer(Modifier.height(8.dp))
         HistoryPanel(
             history = history,
             sharedFiles = sharedFiles,
-            onRestore = onRestoreState
+            onRestore = onRestoreState,
+            onRestoreBaseline = onRestoreBaseline
         )
     }
 
@@ -456,7 +473,8 @@ private val historyTimeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault()
 private fun HistoryPanel(
     history: HistoryService,
     sharedFiles: List<String>,
-    onRestore: (fileId: String, opId: Long) -> Unit
+    onRestore: (fileId: String, opId: Long) -> Unit,
+    onRestoreBaseline: (fileId: String) -> Unit
 ) {
     GroupHeader("Edit History")
 
@@ -484,23 +502,24 @@ private fun HistoryPanel(
     }
 
     val fileId = selectedFile.value
-    val fh = history.histories[fileId]
+    val fh = history.timelines[fileId]
 
-    val selectedTab = remember { mutableStateOf("main") } // "main" | "alt"
-    val altAvailable = fh?.alt?.value != null
+    val selectedTab = remember { mutableStateOf("applied") } // "applied" | "displaced"
+    val displaced = fh?.displaced?.value
+    val altAvailable = !displaced.isNullOrEmpty()
 
     Spacer(Modifier.height(4.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (selectedTab.value == "main") {
-            DefaultButton(onClick = { selectedTab.value = "main" }) { Text("Main", fontSize = 10.sp) }
+        if (selectedTab.value == "applied") {
+            DefaultButton(onClick = { selectedTab.value = "applied" }) { Text("Main", fontSize = 10.sp) }
         } else {
-            OutlinedButton(onClick = { selectedTab.value = "main" }) { Text("Main", fontSize = 10.sp) }
+            OutlinedButton(onClick = { selectedTab.value = "applied" }) { Text("Main", fontSize = 10.sp) }
         }
         if (altAvailable) {
-            if (selectedTab.value == "alt") {
-                DefaultButton(onClick = { selectedTab.value = "alt" }) { Text("Alternate", fontSize = 10.sp) }
+            if (selectedTab.value == "displaced") {
+                DefaultButton(onClick = { selectedTab.value = "displaced" }) { Text("Alternate", fontSize = 10.sp) }
             } else {
-                OutlinedButton(onClick = { selectedTab.value = "alt" }) { Text("Alternate", fontSize = 10.sp) }
+                OutlinedButton(onClick = { selectedTab.value = "displaced" }) { Text("Alternate", fontSize = 10.sp) }
             }
         } else {
             Text("(no alt branch)", fontSize = 10.sp)
@@ -511,11 +530,15 @@ private fun HistoryPanel(
 
     val ops: List<EditOp> = when {
         fh == null -> emptyList()
-        selectedTab.value == "alt" -> fh.alt.value ?: emptyList()
-        else -> fh.main.toList()
+        selectedTab.value == "displaced" -> displaced ?: emptyList()
+        else -> fh.applied.toList()
     }
 
-    if (ops.isEmpty()) {
+    val baseline = fh?.baseline?.value
+    val baselineTs = fh?.baselineTimestamp?.value ?: 0L
+    val showBaselineRow = selectedTab.value == "applied" && baseline != null
+
+    if (ops.isEmpty() && !showBaselineRow) {
         Text("No edits recorded.", fontSize = 10.sp)
         return
     }
@@ -524,7 +547,7 @@ private fun HistoryPanel(
     ops.asReversed().forEach { op ->
         val time = historyTimeFormat.format(Date(op.timestamp))
         val preview = buildPreview(op)
-        val restorable = selectedTab.value == "main" && !op.undone
+        val restorable = !op.undone // both tabs: clicking restores to that state
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -538,7 +561,7 @@ private fun HistoryPanel(
         ) {
             val marker = if (op.undone) "[undone] " else ""
             Text(
-                text = "$time  ${op.userName}  $marker$preview",
+                text = "$time  ${op.userName}  L${op.line + 1}  $marker$preview",
                 fontFamily = FontFamily.Monospace,
                 fontSize = 10.sp,
                 modifier = Modifier.weight(1f)
@@ -546,6 +569,26 @@ private fun HistoryPanel(
             if (restorable) {
                 Text("restore", fontSize = 9.sp)
             }
+        }
+    }
+
+    if (showBaselineRow) {
+        val time = historyTimeFormat.format(Date(baselineTs))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 1.dp)
+                .clickable { onRestoreBaseline(fileId) },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "$time  ---  Initial (pre-session) state",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Text("restore", fontSize = 9.sp)
         }
     }
 }

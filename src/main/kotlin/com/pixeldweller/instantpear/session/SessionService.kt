@@ -75,8 +75,12 @@ class SessionService(private val project: Project) {
 
     val closedCollabFiles = mutableStateListOf<String>() // guest-only: files closed by user
 
-    // Host-only edit history. Non-null only when isHost.value.
+    // Host-only edit history. Populated only when isHost.value.
     val history = HistoryService()
+
+    // Per-file next-undo preview shown to the local user.
+    // On host: computed locally after every change. On guest: pushed by host via UNDO_HINT.
+    val undoHints = mutableStateMapOf<String, String>()
 
     data class PendingFileRequest(val filePath: String, val requesterId: String, val requesterName: String)
     private val pendingFileRequests = ArrayDeque<PendingFileRequest>()
@@ -302,6 +306,10 @@ class SessionService(private val project: Project) {
 
     private fun attachEditor(fileId: String, editor: Editor) {
         if (collabEditors.containsKey(fileId)) return
+        // Capture pre-session baseline before any listeners fire (host only — guest has no authoritative history).
+        if (isHost.value) {
+            history.setBaselineIfAbsent(fileId, editor.document.text)
+        }
         val ce = CollabEditor(
             project = project,
             editor = editor,
@@ -310,14 +318,20 @@ class SessionService(private val project: Project) {
                 val enriched = msg.copy(userId = myUserId, userName = myUserName)
                 // Host records its own local edits into history before broadcasting.
                 if (isHost.value && msg.type == PearMessage.DOCUMENT_CHANGE) {
+                    val off = msg.offset ?: 0
+                    val lineAtOp = runCatching {
+                        editor.document.getLineNumber(off.coerceIn(0, editor.document.textLength))
+                    }.getOrDefault(0)
                     history.record(
                         userId = myUserId ?: "host",
                         userName = myUserName,
                         fileId = msg.fileName ?: fileId,
-                        offset = msg.offset ?: 0,
+                        offset = off,
                         oldText = msg.oldText ?: "",
-                        newText = msg.newText ?: ""
+                        newText = msg.newText ?: "",
+                        line = lineAtOp
                     )
+                    broadcastUndoHints(msg.fileName ?: fileId)
                 }
                 client?.send(enriched)
             },
@@ -462,6 +476,47 @@ class SessionService(private val project: Project) {
                                 )
                             )
                         }
+                        // Also push current run/debug state so joiner sees an active session.
+                        if (hostRunState.value != "idle") {
+                            client?.send(
+                                PearMessage(
+                                    type = PearMessage.RUN_STATE,
+                                    runState = hostRunState.value,
+                                    processName = hostProcessName.value,
+                                    targetUserId = userId
+                                )
+                            )
+                        }
+                        val dbgFile = debugFileName.value
+                        val dbgLine = debugLine.value
+                        if (dbgFile != null && dbgLine != null) {
+                            client?.send(
+                                PearMessage(
+                                    type = PearMessage.DEBUG_POSITION,
+                                    fileName = dbgFile,
+                                    line = dbgLine,
+                                    targetUserId = userId
+                                )
+                            )
+                        }
+                        if (debugVariables.isNotEmpty()) {
+                            client?.send(
+                                PearMessage(
+                                    type = PearMessage.DEBUG_VARIABLES,
+                                    variables = debugVariables.toList(),
+                                    targetUserId = userId
+                                )
+                            )
+                        }
+                        if (consoleViewport.value.isNotEmpty()) {
+                            client?.send(
+                                PearMessage(
+                                    type = PearMessage.CONSOLE_VIEWPORT,
+                                    consoleText = consoleViewport.value,
+                                    targetUserId = userId
+                                )
+                            )
+                        }
                     }
                 }
 
@@ -514,14 +569,22 @@ class SessionService(private val project: Project) {
                         val uname = message.userName
                             ?: connectedUsers.find { it.userId == uid }?.userName
                             ?: "Unknown"
+                        val off = message.offset ?: 0
+                        val doc = collabEditors[fileId]?.editor?.document
+                        val lineAtOp = if (doc != null) {
+                            runCatching { doc.getLineNumber(off.coerceIn(0, doc.textLength)) }
+                                .getOrDefault(0)
+                        } else 0
                         history.record(
                             userId = uid,
                             userName = uname,
                             fileId = fileId,
-                            offset = message.offset ?: 0,
+                            offset = off,
                             oldText = message.oldText ?: "",
-                            newText = message.newText ?: ""
+                            newText = message.newText ?: "",
+                            line = lineAtOp
                         )
+                        broadcastUndoHints(fileId)
                     }
                     collabEditors[fileId]?.applyRemoteChange(message)
                 }
@@ -664,6 +727,23 @@ class SessionService(private val project: Project) {
                 PearMessage.HISTORY_REJECT -> {
                     statusMessage.value = message.message ?: "Undo refused"
                 }
+
+                PearMessage.UNDO_HINT -> {
+                    if (isHost.value) return@invokeLater
+                    val fileId = message.fileName ?: return@invokeLater
+                    if (message.hintAvailable == true) {
+                        undoHints[fileId] = message.hintPreview ?: ""
+                    } else {
+                        undoHints.remove(fileId)
+                    }
+                }
+
+                PearMessage.HISTORY_RESTORE -> {
+                    // Guest received: host restored state; force a tab close + resync for authoritative content.
+                    if (isHost.value) return@invokeLater
+                    val fileId = message.fileName ?: return@invokeLater
+                    forceResyncFile(fileId)
+                }
             }
         }
     }
@@ -704,14 +784,65 @@ class SessionService(private val project: Project) {
             return
         }
         applyAndBroadcastInverse(inverse)
+        broadcastUndoHints(fileId)
     }
 
-    /** Host-only: restore file to state at [targetOpId]. Reverse-applies tail and caches as alt. */
+    /**
+     * Host-only: restore the file's document to the state at [targetOpId].
+     * Branch is inferred from where the op lives. Guests get HISTORY_RESTORE and force-resync.
+     */
     fun restoreToState(fileId: String, targetOpId: Long) {
         if (!isHost.value) return
-        val inverses = history.restore(fileId, targetOpId)
-        inverses.forEach { applyAndBroadcastInverse(it) }
+        val inverses = if (history.isInApplied(fileId, targetOpId)) {
+            history.restoreToApplied(fileId, targetOpId)
+        } else {
+            history.restoreToDisplaced(fileId, targetOpId)
+        }
+        if (inverses.isEmpty()) {
+            statusMessage.value = "Nothing to restore"
+            return
+        }
+        inverses.forEach { applyInverseLocally(it) }
+        // Instead of sending many per-op DOCUMENT_CHANGE messages to peers (brittle under reordering),
+        // tell each guest to reopen the file; they'll request a fresh DOCUMENT_SYNC.
+        for (user in connectedUsers) {
+            client?.send(
+                PearMessage(
+                    type = PearMessage.HISTORY_RESTORE,
+                    fileName = fileId,
+                    historyTargetId = targetOpId,
+                    targetUserId = user.userId
+                )
+            )
+        }
         statusMessage.value = "Restored state; alternate branch saved"
+        broadcastUndoHints(fileId)
+    }
+
+    /** Host-only: wipe session edits, restore to baseline (pre-share snapshot). */
+    fun restoreToBaseline(fileId: String) {
+        if (!isHost.value) return
+        val ce = collabEditors[fileId] ?: run {
+            statusMessage.value = "File not open on host"
+            return
+        }
+        val inverse = history.restoreToBaseline(fileId, ce.editor.document.textLength)
+        if (inverse == null) {
+            statusMessage.value = "Already at baseline"
+            return
+        }
+        applyInverseLocally(inverse)
+        for (user in connectedUsers) {
+            client?.send(
+                PearMessage(
+                    type = PearMessage.HISTORY_RESTORE,
+                    fileName = fileId,
+                    targetUserId = user.userId
+                )
+            )
+        }
+        statusMessage.value = "Restored $fileId to pre-session state"
+        broadcastUndoHints(fileId)
     }
 
     private fun applyAndBroadcastInverse(inv: InverseOp) {
@@ -728,6 +859,78 @@ class SessionService(private val project: Project) {
         )
         ce.applyRemoteChange(synthetic) // applies locally, suppresses listener
         client?.send(synthetic)          // broadcast to peers
+    }
+
+    /** Applies an inverse to the host's own document without broadcasting per-op deltas. */
+    private fun applyInverseLocally(inv: InverseOp) {
+        val ce = collabEditors[inv.fileId] ?: return
+        val synthetic = PearMessage(
+            type = PearMessage.DOCUMENT_CHANGE,
+            fileName = inv.fileId,
+            offset = inv.offset,
+            oldLength = inv.oldLength,
+            newText = inv.newText
+        )
+        ce.applyRemoteChange(synthetic)
+    }
+
+    /** Guest-side: close current tab for [fileId] and request a fresh sync from host. */
+    private fun forceResyncFile(fileId: String) {
+        val fem = FileEditorManager.getInstance(project)
+        guestVirtualFiles.remove(fileId)?.let { vf ->
+            try { fem.closeFile(vf) } catch (_: Exception) {}
+        }
+        collabEditors.remove(fileId)?.let { Disposer.dispose(it) }
+        closedCollabFiles.remove(fileId)
+        client?.send(
+            PearMessage(
+                type = PearMessage.DOCUMENT_RESYNC_REQUEST,
+                fileName = fileId,
+                userId = myUserId,
+                userName = myUserName
+            )
+        )
+        statusMessage.value = "Host restored history; resyncing $fileId"
+    }
+
+    /** Host-only: recompute and push per-user undo hints. Also updates host's own local hint. */
+    private fun broadcastUndoHints(fileId: String) {
+        if (!isHost.value) return
+
+        // Host's own hint
+        val myId = myUserId ?: "host"
+        val selfHint = history.peekUndoForUser(fileId, myId)
+        if (selfHint != null) {
+            undoHints[fileId] = previewForHint(selfHint)
+        } else {
+            undoHints.remove(fileId)
+        }
+
+        // Each connected guest
+        for (user in connectedUsers) {
+            val hint = history.peekUndoForUser(fileId, user.userId)
+            client?.send(
+                PearMessage(
+                    type = PearMessage.UNDO_HINT,
+                    fileName = fileId,
+                    targetUserId = user.userId,
+                    hintAvailable = hint != null,
+                    hintPreview = hint?.let { previewForHint(it) }
+                )
+            )
+        }
+    }
+
+    private fun previewForHint(op: com.pixeldweller.instantpear.history.EditOp): String {
+        val maxLen = 40
+        fun clip(s: String) = s.replace('\n', '\u23CE').let {
+            if (it.length > maxLen) it.take(maxLen) + "..." else it
+        }
+        return when {
+            op.oldText.isEmpty() -> "insert \"${clip(op.newText)}\" @${op.offset}"
+            op.newText.isEmpty() -> "delete \"${clip(op.oldText)}\" @${op.offset}"
+            else -> "replace \"${clip(op.oldText)}\" -> \"${clip(op.newText)}\" @${op.offset}"
+        }
     }
 
     fun requestInspectVariable(variablePath: String) {
@@ -846,6 +1049,7 @@ class SessionService(private val project: Project) {
         closedCollabFiles.clear()
         pendingFileRequests.clear()
         history.clear()
+        undoHints.clear()
         hostRunState.value = "idle"
         hostProcessName.value = ""
         clearDebugState()
